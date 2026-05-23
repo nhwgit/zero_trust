@@ -1,0 +1,34 @@
+# Zero Trust Access Gateway — 인프라 기동
+# Phase 0: Keycloak(IdP)만 먼저 띄운다. 이후 Phase에서 prometheus/grafana/redis 등을 추가한다.
+#
+# 기동:   docker compose -f docker/docker-compose.yml up -d
+# 중지:   docker compose -f docker/docker-compose.yml down
+# realm:  ./keycloak/realm-export/ztg-realm.json 을 기동 시 자동 import 한다.
+#
+# 데모/학습용이므로 dev 모드(start-dev)로 띄운다. 운영 설정(HTTPS/외부 DB)은 범위 밖.
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: ztg-keycloak
+    command:
+      - start-dev
+      - --import-realm
+    environment:
+      # 부트스트랩 관리자 계정 (Keycloak 26+ 권장 변수명)
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # dev 모드: HTTP 허용, hostname 검증 완화
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8081:8080"   # 게이트웨이(8080)와 포트 충돌 피하려고 호스트는 8081
+    volumes:
+      # 기동 시 realm 자동 import (코드로 realm을 형상관리하기 위함)
+      - ./keycloak/realm-export:/opt/keycloak/data/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '\"status\": \"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
