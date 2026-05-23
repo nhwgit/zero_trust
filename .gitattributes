@@ -1,0 +1,7 @@
+# 셸 스크립트는 WSL/bash에서 실행되므로 항상 LF 유지 (CRLF면 깨짐)
+*.sh    text eol=lf
+gradlew text eol=lf
+
+# Windows 배치/래퍼는 CRLF
+*.bat       text eol=crlf
+gradlew.bat text eol=crlf
