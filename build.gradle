@@ -1,0 +1,36 @@
+// 루트 빌드 — 공통 설정을 모든 서브모듈에 적용한다.
+// Spring Boot/의존성관리 플러그인은 여기서 버전만 고정하고(apply false),
+// 실제 적용은 실행 가능한 모듈(resource-api 등)에서 한다.
+plugins {
+    id 'org.springframework.boot' version '3.3.5' apply false
+    id 'io.spring.dependency-management' version '1.1.6' apply false
+}
+
+subprojects {
+    apply plugin: 'java'
+    apply plugin: 'io.spring.dependency-management'
+
+    group = 'com.ztg'
+    version = '0.0.1-SNAPSHOT'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+
+    repositories {
+        mavenCentral()
+    }
+
+    // Spring Boot BOM으로 의존성 버전을 일괄 관리 (개별 모듈은 버전 없이 의존성만 선언)
+    dependencyManagement {
+        imports {
+            mavenBom org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES
+        }
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
+}
