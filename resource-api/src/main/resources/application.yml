@@ -1,0 +1,6 @@
+server:
+  port: 8082   # gateway(8080)/keycloak(8081)와 포트 분리
+
+spring:
+  application:
+    name: resource-api

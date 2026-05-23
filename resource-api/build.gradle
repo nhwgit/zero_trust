@@ -1,0 +1,11 @@
+// resource-api — 보호 대상 백엔드.
+// Phase 0: 인증 없이 동작하는 hello 엔드포인트만. JWT 검증은 Phase 1에서 추가한다.
+plugins {
+    id 'org.springframework.boot'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
