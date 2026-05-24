@@ -1,11 +1,13 @@
 package com.ztg.resource;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
@@ -24,6 +26,10 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration
 public class SecurityConfig {
 
+    /** 게이트웨이가 주입하는 내부 신뢰 헤더의 공유 비밀(기본값은 dev용, gateway와 동일). */
+    @Value("${ztg.resource.trust-secret:ztg-gateway-trust-secret}")
+    private String trustSecret;
+
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -35,7 +41,9 @@ public class SecurityConfig {
                         // 그 외 모든 요청: 유효한 토큰 필요(없으면 401)
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())))
+                // PEP(게이트웨이) 경유 강제: 토큰 인증보다 먼저 신뢰 헤더를 확인해 우회 직접호출을 차단.
+                .addFilterBefore(new GatewayTrustFilter(trustSecret), BearerTokenAuthenticationFilter.class);
         return http.build();
     }
 

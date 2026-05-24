@@ -11,3 +11,9 @@ spring:
           # 토큰의 iss와 정확히 일치해야 한다. get-token.sh가 localhost:8081로
           # 발급하므로 동일하게 맞춘다. JWKS는 이 issuer의 .well-known에서 자동 조회.
           issuer-uri: ${KC_ISSUER_URI:http://localhost:8081/realms/ztg}
+
+ztg:
+  resource:
+    # 게이트웨이(PEP) 경유를 증명하는 내부 신뢰 헤더의 공유 비밀. gateway의 trust-secret과 동일해야 한다.
+    # 이 값이 없는 직접 호출은 GatewayTrustFilter가 403으로 막는다.
+    trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}
