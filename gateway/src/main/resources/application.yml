@@ -1,0 +1,23 @@
+server:
+  port: 8080   # 외부 진입점. keycloak(8081)/resource-api(8082)와 포트 분리.
+
+spring:
+  application:
+    name: gateway
+  cloud:
+    gateway:
+      routes:
+        # 외부 요청은 전부 이 라우트를 타고 resource-api로 전달된다.
+        # JWT 검증/신뢰헤더 주입은 라우팅과 별개인 커스텀 GlobalFilter가 담당한다.
+        - id: resource-api
+          uri: ${RESOURCE_API_URI:http://localhost:8082}
+          predicates:
+            - Path=/api/**
+
+ztg:
+  gateway:
+    # 토큰 검증 기준. resource-api와 동일한 issuer여야 한다(JWKS는 .well-known에서 조회).
+    issuer-uri: ${KC_ISSUER_URI:http://localhost:8081/realms/ztg}
+    # 게이트웨이를 통과한 요청임을 증명하는 내부 신뢰 헤더의 공유 비밀.
+    # resource-api가 동일 값을 검증해 우회 직접호출을 차단한다(데모용 정적 비밀 — Phase 6에서 mTLS로 대체).
+    trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}

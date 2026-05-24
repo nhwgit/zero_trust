@@ -1,5 +1,5 @@
 // Zero Trust Access Gateway — 멀티모듈 루트
-// Phase 0: resource-api만 포함. gateway/pdp/pip/common 모듈은 각 Phase에서 추가한다.
+// gateway/pdp/pip/common 모듈은 각 Phase에서 추가한다.
 pluginManagement {
     repositories {
         gradlePluginPortal()
@@ -10,3 +10,4 @@ pluginManagement {
 rootProject.name = 'zero-trust-gateway'
 
 include 'resource-api'
+include 'gateway'
