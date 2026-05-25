@@ -4,3 +4,13 @@ server:
 spring:
   application:
     name: pip
+
+# 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}

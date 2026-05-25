@@ -8,6 +8,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     // JWT(Bearer) 검증 — issuer의 JWKS로 서명 검증, iss/exp 등 클레임 검증
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    // 관측: actuator로 /actuator/prometheus 노출, micrometer로 기본 지표 수집
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     // MockMvc에 가짜 JWT 인증을 주입하는 jwt() post-processor 제공

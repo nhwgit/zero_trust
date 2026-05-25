@@ -41,6 +41,15 @@ public class GatewayTrustFilter extends OncePerRequestFilter {
                 : trustSecret.getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * 관측 엔드포인트({@code /actuator/**})는 PEP를 거치지 않고 Prometheus가 직접 스크랩하므로
+     * 신뢰 헤더 검사에서 제외한다. 보호 대상 비즈니스 API({@code /api/**})에만 PEP 경유를 강제한다.
+     */
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return request.getRequestURI().startsWith("/actuator/");
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {

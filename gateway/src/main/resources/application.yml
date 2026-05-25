@@ -23,3 +23,19 @@ ztg:
     trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}
     # PDP(정책결정) 위치. JWT 검증 통과 후 매 요청마다 여기에 인가를 질의한다.
     pdp-base-uri: ${PDP_BASE_URI:http://localhost:8084}
+
+# 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics   # 데모: 필요한 것만 노출(전체 * 금지)
+  metrics:
+    tags:
+      application: ${spring.application.name}      # 모든 지표에 서비스 식별 태그 부착
+    distribution:
+      # PDP 호출 지연을 히스토그램으로 발행 → Prometheus histogram_quantile로 p99 계산 가능.
+      percentiles-histogram:
+        ztg.pdp.requests: true
+      slo:
+        ztg.pdp.requests: 5ms,10ms,25ms,50ms,100ms,250ms,500ms,1s

@@ -36,6 +36,8 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // 관측 엔드포인트: Prometheus 스크랩용으로 토큰 없이 허용(데모; 운영은 망분리/별도 인증).
+                        .requestMatchers("/actuator/**").permitAll()
                         // 관리자 전용: admin 역할이 없으면 403
                         .requestMatchers("/api/admin/**").hasRole("admin")
                         // 그 외 모든 요청: 유효한 토큰 필요(없으면 401)

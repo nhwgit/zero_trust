@@ -14,3 +14,13 @@ ztg:
     business-hour-end: ${BUSINESS_HOUR_END:18}
     # 위험점수 임계치(이상이면 차단). 위험적응 인가 데모용.
     risk-threshold: ${RISK_THRESHOLD:80}
+
+# 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}

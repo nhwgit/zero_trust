@@ -22,6 +22,9 @@ dependencies {
     // 여기서는 자동 필터체인을 쓰지 않고 디코더만 꺼내 커스텀 필터에서 검증한다.
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     implementation project(':common')   // PDP 질의용 Decision* DTO
+    // 관측: actuator로 /actuator/prometheus 노출, micrometer로 RED 지표(요청수/allow·deny/지연) 수집
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'io.projectreactor:reactor-test'

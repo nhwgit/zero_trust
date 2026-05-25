@@ -7,6 +7,9 @@ plugins {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation project(':common')   // Decision* / SubjectAttributes 공유 DTO
+    // 관측: actuator로 /actuator/prometheus 노출, micrometer로 PDP 판단 지표 수집
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }

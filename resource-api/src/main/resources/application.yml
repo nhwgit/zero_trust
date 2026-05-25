@@ -17,3 +17,14 @@ ztg:
     # 게이트웨이(PEP) 경유를 증명하는 내부 신뢰 헤더의 공유 비밀. gateway의 trust-secret과 동일해야 한다.
     # 이 값이 없는 직접 호출은 GatewayTrustFilter가 403으로 막는다.
     trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}
+
+# 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
+# 데모: 관측 엔드포인트는 인증/신뢰헤더 없이 접근 허용(SecurityConfig·GatewayTrustFilter에서 예외).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
