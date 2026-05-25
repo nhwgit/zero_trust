@@ -21,6 +21,7 @@ dependencies {
     // JWT(Bearer) 검증용 ReactiveJwtDecoder. resource-server 스타터지만
     // 여기서는 자동 필터체인을 쓰지 않고 디코더만 꺼내 커스텀 필터에서 검증한다.
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    implementation project(':common')   // PDP 질의용 Decision* DTO
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'io.projectreactor:reactor-test'

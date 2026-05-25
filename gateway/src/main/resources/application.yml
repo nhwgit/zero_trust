@@ -21,3 +21,5 @@ ztg:
     # 게이트웨이를 통과한 요청임을 증명하는 내부 신뢰 헤더의 공유 비밀.
     # resource-api가 동일 값을 검증해 우회 직접호출을 차단한다(데모용 정적 비밀 — Phase 6에서 mTLS로 대체).
     trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}
+    # PDP(정책결정) 위치. JWT 검증 통과 후 매 요청마다 여기에 인가를 질의한다.
+    pdp-base-uri: ${PDP_BASE_URI:http://localhost:8084}
