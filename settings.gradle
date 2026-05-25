@@ -11,3 +11,6 @@ rootProject.name = 'zero-trust-gateway'
 
 include 'resource-api'
 include 'gateway'
+include 'common'
+include 'pip'
+include 'pdp'
