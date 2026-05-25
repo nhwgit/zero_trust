@@ -1,0 +1,6 @@
+server:
+  port: 8083   # gateway(8080)/keycloak(8081)/resource-api(8082)와 포트 분리. PDP만 호출하는 내부 서비스.
+
+spring:
+  application:
+    name: pip

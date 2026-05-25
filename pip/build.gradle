@@ -1,0 +1,12 @@
+// pip — Policy Information Point. 판단에 필요한 주체 맥락/속성을 제공한다.
+// 내부 서비스이므로 인증 없이 동작한다(망 분리 전제, 데모 단순화).
+plugins {
+    id 'org.springframework.boot'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation project(':common')   // SubjectAttributes 등 공유 DTO
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
