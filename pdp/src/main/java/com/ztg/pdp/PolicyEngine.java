@@ -85,7 +85,13 @@ public class PolicyEngine {
     }
 
     private boolean withinBusinessHours(LocalTime now) {
-        return !now.isBefore(LocalTime.of(businessHourStart, 0))
-                && now.isBefore(LocalTime.of(businessHourEnd, 0));
+        if (now.isBefore(LocalTime.of(businessHourStart, 0))) {
+            return false;
+        }
+        // end=24는 "자정까지(하루 종일)"를 뜻한다. LocalTime.of(24,0)은 DateTimeException이므로 분리 처리.
+        if (businessHourEnd >= 24) {
+            return true;
+        }
+        return now.isBefore(LocalTime.of(businessHourEnd, 0));
     }
 }

@@ -87,6 +87,22 @@ class PolicyEngineTest {
     }
 
     @Test
+    void payroll_allowed_with_24h_window_at_any_hour() {
+        // 업무시간 창을 0-24(하루 종일)로 열면 한밤(3시)에도 finance/신뢰면 허용된다.
+        // 회귀 방지: end=24를 LocalTime.of(24,0)으로 만들면 DateTimeException → 500. 분리 처리해야 한다.
+        Clock fixed = Clock.fixed(
+                LocalDate.of(2026, 5, 31).atTime(3, 0).toInstant(ZoneOffset.UTC),
+                ZoneOffset.UTC);
+        PolicyEngine engine = new PolicyEngine(fixed, 0, 24, RISK_THRESHOLD);
+
+        DecisionResponse res = engine.evaluate(
+                payrollRequest(),
+                new SubjectAttributes("alice", "finance", true, 10));
+
+        assertThat(res.decision()).isEqualTo(Decision.ALLOW);
+    }
+
+    @Test
     void non_payroll_resource_allowed_by_default() {
         DecisionResponse res = engineAtHour(3).evaluate(  // 업무시간 밖이어도 payroll 정책과 무관
                 new DecisionRequest("alice", "GET", "/api/hello", Map.of()),
