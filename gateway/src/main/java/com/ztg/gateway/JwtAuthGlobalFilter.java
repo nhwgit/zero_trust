@@ -1,6 +1,10 @@
 package com.ztg.gateway;
 
 import java.util.Map;
+import java.util.UUID;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,24 +50,38 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     static final String TRUST_HEADER = "X-Gateway-Auth";
     /** PDP가 DENY한 사유를 클라이언트에게 노출하는 헤더(감사/디버깅용). */
     static final String DENY_REASON_HEADER = "X-Denied-Reason";
+    /** 요청 추적 ID 헤더 — 들어온 값이 있으면 잇고, 없으면 생성해 다운스트림으로 전파한다. */
+    static final String REQUEST_ID_HEADER = "X-Request-Id";
     private static final String BEARER_PREFIX = "Bearer ";
+    /** PDP 호출 실패(fail-close)로 만든 DENY 사유의 접두어. 거부 원인(cause) 분류에 쓴다. */
+    static final String PDP_UNAVAILABLE_PREFIX = "PDP unavailable: ";
+    /** 요청 ID를 교환 속성으로 실어 reject/forward 경로에서 공유하기 위한 키. */
+    private static final String REQUEST_ID_ATTR = JwtAuthGlobalFilter.class.getName() + ".requestId";
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthGlobalFilter.class);
 
     private final org.springframework.security.oauth2.jwt.ReactiveJwtDecoder jwtDecoder;
     private final PdpClient pdpClient;
     private final String trustSecret;
+    private final MeterRegistry meterRegistry;
 
     JwtAuthGlobalFilter(org.springframework.security.oauth2.jwt.ReactiveJwtDecoder jwtDecoder,
                         PdpClient pdpClient,
-                        @Value("${ztg.gateway.trust-secret}") String trustSecret) {
+                        @Value("${ztg.gateway.trust-secret}") String trustSecret,
+                        MeterRegistry meterRegistry) {
         this.jwtDecoder = jwtDecoder;
         this.pdpClient = pdpClient;
         this.trustSecret = trustSecret;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        // 요청 추적 ID 확정 — 모든 로그/응답이 같은 ID로 묶이도록 제일 먼저 정한다.
+        String requestId = resolveRequestId(exchange);
+        exchange.getAttributes().put(REQUEST_ID_ATTR, requestId);
+        exchange.getResponse().getHeaders().set(REQUEST_ID_HEADER, requestId);
+
         String authz = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
         if (authz == null || !authz.regionMatches(true, 0, BEARER_PREFIX, 0, BEARER_PREFIX.length())) {
             return reject401(exchange, "missing or malformed Authorization header");
@@ -78,21 +96,48 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
     /** PDP에 인가를 질의하고 ALLOW면 백엔드로 전달, DENY/오류면 403으로 차단한다. */
     private Mono<Void> authorizeThenForward(ServerWebExchange exchange, GatewayFilterChain chain, Jwt jwt) {
-        DecisionRequest request = new DecisionRequest(
-                subjectOf(jwt),
-                exchange.getRequest().getMethod().name(),
-                exchange.getRequest().getPath().value(),
-                Map.of());
+        String subject = subjectOf(jwt);
+        String method = exchange.getRequest().getMethod().name();
+        String path = exchange.getRequest().getPath().value();
+        DecisionRequest request = new DecisionRequest(subject, method, path, Map.of());
+
+        // PDP 호출 지연을 측정한다(p99는 application.yml의 히스토그램 설정으로 산출).
+        Timer.Sample sample = Timer.start(meterRegistry);
         return pdpClient.decide(request)
+                .doOnNext(d -> sample.stop(meterRegistry.timer("ztg.pdp.requests", "outcome", "success")))
                 // fail-close: PDP 호출 실패는 "판단 불가"이므로 DENY로 환산해 403 처리한다.
-                .onErrorResume(e -> Mono.just(
-                        DecisionResponse.deny("PDP unavailable: " + e.getMessage())))
+                .onErrorResume(e -> {
+                    sample.stop(meterRegistry.timer("ztg.pdp.requests", "outcome", "error"));
+                    return Mono.just(DecisionResponse.deny(PDP_UNAVAILABLE_PREFIX + e.getMessage()));
+                })
                 .flatMap(decision -> {
+                    String requestId = requestIdOf(exchange);
                     if (decision.isAllowed()) {
+                        meterRegistry.counter("ztg.authz.decisions", "decision", "allow", "cause", "none").increment();
+                        log.info("authz decision=ALLOW subject={} method={} path={} requestId={}",
+                                subject, method, path, requestId);
                         return chain.filter(exchange.mutate().request(withTrustHeader(exchange)).build());
                     }
+                    // 거부 원인 분류: PDP 호출 실패(fail-close)와 정책상 거부를 구분해 가용성/정책을 따로 본다.
+                    String cause = decision.reason() != null
+                            && decision.reason().startsWith(PDP_UNAVAILABLE_PREFIX) ? "pdp_error" : "policy";
+                    meterRegistry.counter("ztg.authz.decisions", "decision", "deny", "cause", cause).increment();
+                    log.info("authz decision=DENY cause={} subject={} method={} path={} reason=\"{}\" requestId={}",
+                            cause, subject, method, path, decision.reason(), requestId);
                     return reject403(exchange, decision.reason());
                 });
+    }
+
+    /** 들어온 {@code X-Request-Id}를 잇거나, 없으면 새로 생성한다(분산 추적의 상관 키). */
+    private static String resolveRequestId(ServerWebExchange exchange) {
+        String incoming = exchange.getRequest().getHeaders().getFirst(REQUEST_ID_HEADER);
+        return (incoming != null && !incoming.isBlank()) ? incoming : UUID.randomUUID().toString();
+    }
+
+    /** filter() 진입 때 교환 속성에 실어둔 요청 ID를 꺼낸다. */
+    private static String requestIdOf(ServerWebExchange exchange) {
+        Object id = exchange.getAttribute(REQUEST_ID_ATTR);
+        return id != null ? id.toString() : "unknown";
     }
 
     /** 인가 주체 식별자: preferred_username 우선, 없으면 sub. PIP 조회 키로 쓰인다. */
@@ -112,6 +157,8 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         HttpHeaders writable = new HttpHeaders();
         writable.addAll(exchange.getRequest().getHeaders());
         writable.set(TRUST_HEADER, trustSecret);
+        // 요청 ID를 백엔드로 전파해 게이트웨이↔resource-api 로그를 같은 키로 묶는다.
+        writable.set(REQUEST_ID_HEADER, requestIdOf(exchange));
         return new ServerHttpRequestDecorator(exchange.getRequest()) {
             @Override
             public HttpHeaders getHeaders() {
@@ -122,8 +169,8 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
     /** fail-close(인증): 401로 즉시 응답하고 체인을 끊는다(백엔드 미전달). */
     private Mono<Void> reject401(ServerWebExchange exchange, String reason) {
-        log.debug("PEP reject 401: {} ({} {})", reason,
-                exchange.getRequest().getMethod(), exchange.getRequest().getPath());
+        log.info("authn reject=401 reason=\"{}\" method={} path={} requestId={}", reason,
+                exchange.getRequest().getMethod(), exchange.getRequest().getPath(), requestIdOf(exchange));
         exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
         return exchange.getResponse().setComplete();
     }

@@ -22,6 +22,8 @@ import org.springframework.web.server.ServerWebExchange;
 import com.ztg.common.DecisionRequest;
 import com.ztg.common.DecisionResponse;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -36,6 +38,7 @@ import reactor.test.StepVerifier;
  *   <li>클라이언트가 위조한 신뢰 헤더는 게이트웨이 값으로 덮어써짐.</li>
  *   <li>토큰 유효 + PDP DENY → 403 + 사유 헤더, 백엔드 미호출.</li>
  *   <li>토큰 유효 + PDP 호출 실패 → 403 (fail-close), 백엔드 미호출.</li>
+ *   <li>인가 결정이 ztg.authz.decisions 카운터에 decision/cause 태그로 집계됨(관측).</li>
  * </ul>
  */
 class JwtAuthGlobalFilterTest {
@@ -44,7 +47,8 @@ class JwtAuthGlobalFilterTest {
 
     private final ReactiveJwtDecoder decoder = mock(ReactiveJwtDecoder.class);
     private final PdpClient pdpClient = mock(PdpClient.class);
-    private final JwtAuthGlobalFilter filter = new JwtAuthGlobalFilter(decoder, pdpClient, SECRET);
+    private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    private final JwtAuthGlobalFilter filter = new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, registry);
 
     @Test
     void missing_token_is_401_and_does_not_forward() {
@@ -162,6 +166,65 @@ class JwtAuthGlobalFilterTest {
 
         assertThat(forwarded.get()).isFalse();
         assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void allow_increments_allow_decision_counter() {
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        when(pdpClient.decide(any(DecisionRequest.class)))
+                .thenReturn(Mono.just(DecisionResponse.allow("ok")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/hello")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer good-token"));
+
+        StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
+
+        assertThat(registry.counter("ztg.authz.decisions", "decision", "allow", "cause", "none").count())
+                .isEqualTo(1.0);
+        assertThat(registry.timer("ztg.pdp.requests", "outcome", "success").count()).isEqualTo(1L);
+    }
+
+    @Test
+    void policy_deny_increments_deny_policy_counter() {
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        when(pdpClient.decide(any(DecisionRequest.class)))
+                .thenReturn(Mono.just(DecisionResponse.deny("department must be finance")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/payroll")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer good-token"));
+
+        StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
+
+        assertThat(registry.counter("ztg.authz.decisions", "decision", "deny", "cause", "policy").count())
+                .isEqualTo(1.0);
+    }
+
+    @Test
+    void pdp_failure_increments_deny_pdp_error_counter_and_error_timer() {
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        when(pdpClient.decide(any(DecisionRequest.class)))
+                .thenReturn(Mono.error(new RuntimeException("connection refused")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/payroll")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer good-token"));
+
+        StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
+
+        // fail-close가 "정책 거부"가 아니라 "장애로 인한 거부"로 분류되는지 — 가용성 신호.
+        assertThat(registry.counter("ztg.authz.decisions", "decision", "deny", "cause", "pdp_error").count())
+                .isEqualTo(1.0);
+        assertThat(registry.timer("ztg.pdp.requests", "outcome", "error").count()).isEqualTo(1L);
+    }
+
+    @Test
+    void generates_request_id_and_echoes_it_on_response() {
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/hello"));  // 토큰 없음 → 401이어도 요청ID는 부여된다
+
+        StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
+
+        assertThat(exchange.getResponse().getHeaders().getFirst(JwtAuthGlobalFilter.REQUEST_ID_HEADER))
+                .isNotBlank();
     }
 
     private static Jwt sampleJwt() {
