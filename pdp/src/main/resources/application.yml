@@ -1,0 +1,16 @@
+server:
+  port: 8084   # gateway(8080)/keycloak(8081)/resource-api(8082)/pip(8083)와 포트 분리.
+
+spring:
+  application:
+    name: pdp
+
+ztg:
+  pdp:
+    # PIP(맥락 제공) 위치. PDP는 판단 시 여기서 주체 속성을 조회한다.
+    pip-base-uri: ${PIP_BASE_URI:http://localhost:8083}
+    # payroll 업무시간 창(시작 포함, 끝 제외). 데모에서 조건을 바꿔 결과를 뒤집을 수 있도록 설정으로 노출.
+    business-hour-start: ${BUSINESS_HOUR_START:9}
+    business-hour-end: ${BUSINESS_HOUR_END:18}
+    # 위험점수 임계치(이상이면 차단). 위험적응 인가 데모용.
+    risk-threshold: ${RISK_THRESHOLD:80}
