@@ -32,3 +32,36 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+
+  # ── 관측 스택 (Phase 4 Step 2) ──────────────────────────────────────────────
+  # Prometheus는 WSL 컨테이너 안, 스크랩 대상 JVM은 Windows 호스트(bootRun)에 있다.
+  # extra_hosts로 'windows-host'를 WSL→Windows 게이트웨이 IP로 매핑한다.
+  # IP는 WSL 재시작마다 바뀌므로 WINDOWS_HOST_IP 환경변수로 주입한다(smoke-phase4.ps1이 자동 설정).
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: ztg-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2h   # 데모: 단기 보존
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "windows-host:${WINDOWS_HOST_IP:-172.23.48.1}"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: ztg-grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"   # 데모: 로그인 없이 대시보드 열람
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro

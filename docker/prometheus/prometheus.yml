@@ -1,0 +1,30 @@
+# Prometheus 스크랩 설정 (Phase 4 Step 2)
+#
+# 토폴로지 주의: Prometheus는 WSL 도커 컨테이너 안에서 돌고,
+# 스크랩 대상(gateway/pdp/pip/resource-api JVM)은 Windows 호스트에서 bootRun으로 돈다.
+# 따라서 타깃 호스트명은 'windows-host'로 두고, docker-compose의 extra_hosts에서
+# WSL→Windows 게이트웨이 IP(`ip route show default`의 via 주소)로 매핑한다.
+# (host-gateway는 WSL 호스트의 docker0를 가리켜 Windows 호스트엔 닿지 않으므로 쓰지 않는다.)
+
+global:
+  scrape_interval: 5s        # 데모: 빠른 반영을 위해 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # Prometheus 자기 자신
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ZTG 서비스 4종 — 모두 Windows 호스트의 /actuator/prometheus
+  - job_name: ztg
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['windows-host:8080']
+        labels: { service: gateway }
+      - targets: ['windows-host:8082']
+        labels: { service: resource-api }
+      - targets: ['windows-host:8083']
+        labels: { service: pip }
+      - targets: ['windows-host:8084']
+        labels: { service: pdp }
