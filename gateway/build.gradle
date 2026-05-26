@@ -28,4 +28,45 @@ dependencies {
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'io.projectreactor:reactor-test'
+
+    // 통합(e2e) 테스트: 실제 Keycloak 컨테이너로 토큰 발급→게이트웨이 검증을 검증한다.
+    // 버전은 Spring Boot BOM이 관리(testcontainers/okhttp 모두 managed) — 개별 버전 미지정.
+    testImplementation 'org.testcontainers:testcontainers'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    // PDP/백엔드(resource-api)는 stub으로 대체 — 게이트웨이 JWT 검증 경로만 실제로 태운다.
+    testImplementation 'com.squareup.okhttp3:mockwebserver'
+}
+
+// 기본 test/build는 Docker 없이 오프라인으로 green이어야 한다 → integration 태그는 제외한다.
+tasks.named('test') {
+    useJUnitPlatform {
+        excludeTags 'integration'
+    }
+}
+
+// Testcontainers e2e 전용 태스크(로컬/CI에서 Docker가 있을 때만 실행). `:gateway:integrationTest`.
+tasks.register('integrationTest', Test) {
+    description = 'Keycloak Testcontainers 기반 e2e 통합 테스트 (Docker 필요)'
+    group = 'verification'
+    useJUnitPlatform {
+        includeTags 'integration'
+    }
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    shouldRunAfter tasks.named('test')
+
+    // Docker 데몬 위치를 포크된 테스트 JVM에 명시 주입한다. Gradle 데몬은 셸의 DOCKER_HOST를
+    // 물려받지 못할 수 있어(데몬 재사용), -PdockerHost 또는 환경변수로 받아 직접 전달한다.
+    // (이 프로젝트: Docker는 WSL에만 있어 `tcp://localhost:2375` 프록시로 띄운다. 미지정 시 자동탐지.)
+    def dockerHost = findProperty('dockerHost') ?: System.getenv('DOCKER_HOST')
+    if (dockerHost) {
+        environment 'DOCKER_HOST', dockerHost
+    }
+    // Ryuk(정리 컨테이너) 비활성: 별도 이미지 풀 없이 테스트만 돌린다(데모/로컬 기준).
+    environment 'TESTCONTAINERS_RYUK_DISABLED', System.getenv('TESTCONTAINERS_RYUK_DISABLED') ?: 'true'
+    // docker-java 기본 협상 API(1.32)가 최신 데몬(min 1.40)에 거부당하므로 명시 고정한다.
+    // docker-java 3.3.x는 env가 아니라 자체 프로퍼티 키(api.version)로 읽으므로 시스템 프로퍼티로 준다.
+    def apiVersion = System.getenv('DOCKER_API_VERSION') ?: '1.41'
+    environment 'DOCKER_API_VERSION', apiVersion
+    systemProperty 'api.version', apiVersion
 }

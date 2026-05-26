@@ -1,0 +1,57 @@
+{
+  "realm": "ztg",
+  "enabled": true,
+  "displayName": "Zero Trust Gateway",
+  "sslRequired": "none",
+  "accessTokenLifespan": 300,
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "user", "description": "일반 사용자 — 보호 리소스 read" },
+      { "name": "admin", "description": "관리자 — 전체 권한" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "ztg-api",
+      "name": "Zero Trust Gateway API Client",
+      "description": "Resource Server / 게이트웨이가 검증할 토큰의 audience. Direct Access Grant 허용.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "ztg-api-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8080/*", "http://localhost:8081/*"],
+      "webOrigins": ["+"],
+      "defaultClientScopes": ["basic", "web-origins", "roles", "profile", "email"]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@ztg.local",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "alice123", "temporary": false }
+      ],
+      "realmRoles": ["user"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@ztg.local",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Admin",
+      "credentials": [
+        { "type": "password", "value": "bob123", "temporary": false }
+      ],
+      "realmRoles": ["user", "admin"]
+    }
+  ]
+}
