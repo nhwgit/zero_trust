@@ -5,6 +5,12 @@ spring:
   application:
     name: pdp
 
+# 분산 추적(Phase 4 Step 3): 모든 로그 라인에 요청 추적 ID([requestId])를 찍어
+# 게이트웨이→PDP→PIP를 같은 ID로 상관한다. RequestIdFilter가 MDC에 값을 채운다.
+logging:
+  pattern:
+    level: "%5p [%X{requestId:-}]"
+
 ztg:
   pdp:
     # PIP(맥락 제공) 위치. PDP는 판단 시 여기서 주체 속성을 조회한다.

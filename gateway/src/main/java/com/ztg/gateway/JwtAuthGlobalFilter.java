@@ -23,6 +23,7 @@ import org.springframework.web.server.ServerWebExchange;
 
 import com.ztg.common.DecisionRequest;
 import com.ztg.common.DecisionResponse;
+import com.ztg.common.web.RequestId;
 
 import reactor.core.publisher.Mono;
 
@@ -50,8 +51,8 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     static final String TRUST_HEADER = "X-Gateway-Auth";
     /** PDP가 DENY한 사유를 클라이언트에게 노출하는 헤더(감사/디버깅용). */
     static final String DENY_REASON_HEADER = "X-Denied-Reason";
-    /** 요청 추적 ID 헤더 — 들어온 값이 있으면 잇고, 없으면 생성해 다운스트림으로 전파한다. */
-    static final String REQUEST_ID_HEADER = "X-Request-Id";
+    /** 요청 추적 ID 헤더 — 들어온 값이 있으면 잇고, 없으면 생성해 다운스트림으로 전파한다(공용 상수). */
+    static final String REQUEST_ID_HEADER = RequestId.HEADER;
     private static final String BEARER_PREFIX = "Bearer ";
     /** PDP 호출 실패(fail-close)로 만든 DENY 사유의 접두어. 거부 원인(cause) 분류에 쓴다. */
     static final String PDP_UNAVAILABLE_PREFIX = "PDP unavailable: ";
@@ -99,11 +100,13 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         String subject = subjectOf(jwt);
         String method = exchange.getRequest().getMethod().name();
         String path = exchange.getRequest().getPath().value();
+        String requestId = requestIdOf(exchange);
         DecisionRequest request = new DecisionRequest(subject, method, path, Map.of());
 
         // PDP 호출 지연을 측정한다(p99는 application.yml의 히스토그램 설정으로 산출).
         Timer.Sample sample = Timer.start(meterRegistry);
-        return pdpClient.decide(request)
+        // 요청ID를 헤더로 실어 PDP/PIP 로그까지 같은 ID로 묶는다(분산 추적).
+        return pdpClient.decide(request, requestId)
                 .doOnNext(d -> sample.stop(meterRegistry.timer("ztg.pdp.requests", "outcome", "success")))
                 // fail-close: PDP 호출 실패는 "판단 불가"이므로 DENY로 환산해 403 처리한다.
                 .onErrorResume(e -> {
@@ -111,7 +114,6 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                     return Mono.just(DecisionResponse.deny(PDP_UNAVAILABLE_PREFIX + e.getMessage()));
                 })
                 .flatMap(decision -> {
-                    String requestId = requestIdOf(exchange);
                     if (decision.isAllowed()) {
                         meterRegistry.counter("ztg.authz.decisions", "decision", "allow", "cause", "none").increment();
                         log.info("authz decision=ALLOW subject={} method={} path={} requestId={}",

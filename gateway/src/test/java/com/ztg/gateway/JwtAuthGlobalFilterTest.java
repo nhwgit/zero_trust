@@ -2,6 +2,7 @@ package com.ztg.gateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -9,6 +10,7 @@ import java.time.Instant;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -69,7 +71,7 @@ class JwtAuthGlobalFilterTest {
     @Test
     void valid_token_allowed_by_pdp_forwards_with_trust_header() {
         when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
-        when(pdpClient.decide(any(DecisionRequest.class)))
+        when(pdpClient.decide(any(DecisionRequest.class), anyString()))
                 .thenReturn(Mono.just(DecisionResponse.allow("ok")));
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/hello")
@@ -108,7 +110,7 @@ class JwtAuthGlobalFilterTest {
     @Test
     void client_supplied_trust_header_is_overwritten() {
         when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
-        when(pdpClient.decide(any(DecisionRequest.class)))
+        when(pdpClient.decide(any(DecisionRequest.class), anyString()))
                 .thenReturn(Mono.just(DecisionResponse.allow("ok")));
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/hello")
@@ -129,7 +131,7 @@ class JwtAuthGlobalFilterTest {
     @Test
     void pdp_deny_is_403_with_reason_and_does_not_forward() {
         when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
-        when(pdpClient.decide(any(DecisionRequest.class)))
+        when(pdpClient.decide(any(DecisionRequest.class), anyString()))
                 .thenReturn(Mono.just(DecisionResponse.deny("payroll denied: department must be finance")));
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/payroll")
@@ -151,7 +153,7 @@ class JwtAuthGlobalFilterTest {
     @Test
     void pdp_call_failure_fails_closed_to_403() {
         when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
-        when(pdpClient.decide(any(DecisionRequest.class)))
+        when(pdpClient.decide(any(DecisionRequest.class), anyString()))
                 .thenReturn(Mono.error(new RuntimeException("connection refused")));
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/payroll")
@@ -171,7 +173,7 @@ class JwtAuthGlobalFilterTest {
     @Test
     void allow_increments_allow_decision_counter() {
         when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
-        when(pdpClient.decide(any(DecisionRequest.class)))
+        when(pdpClient.decide(any(DecisionRequest.class), anyString()))
                 .thenReturn(Mono.just(DecisionResponse.allow("ok")));
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/hello")
@@ -187,7 +189,7 @@ class JwtAuthGlobalFilterTest {
     @Test
     void policy_deny_increments_deny_policy_counter() {
         when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
-        when(pdpClient.decide(any(DecisionRequest.class)))
+        when(pdpClient.decide(any(DecisionRequest.class), anyString()))
                 .thenReturn(Mono.just(DecisionResponse.deny("department must be finance")));
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/payroll")
@@ -202,7 +204,7 @@ class JwtAuthGlobalFilterTest {
     @Test
     void pdp_failure_increments_deny_pdp_error_counter_and_error_timer() {
         when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
-        when(pdpClient.decide(any(DecisionRequest.class)))
+        when(pdpClient.decide(any(DecisionRequest.class), anyString()))
                 .thenReturn(Mono.error(new RuntimeException("connection refused")));
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/payroll")
@@ -225,6 +227,31 @@ class JwtAuthGlobalFilterTest {
 
         assertThat(exchange.getResponse().getHeaders().getFirst(JwtAuthGlobalFilter.REQUEST_ID_HEADER))
                 .isNotBlank();
+    }
+
+    @Test
+    void incoming_request_id_is_propagated_to_pdp_and_backend() {
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        ArgumentCaptor<String> pdpRequestId = ArgumentCaptor.forClass(String.class);
+        when(pdpClient.decide(any(DecisionRequest.class), pdpRequestId.capture()))
+                .thenReturn(Mono.just(DecisionResponse.allow("ok")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/hello")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
+                        .header(JwtAuthGlobalFilter.REQUEST_ID_HEADER, "trace-xyz"));
+        AtomicReference<ServerWebExchange> forwarded = new AtomicReference<>();
+
+        StepVerifier.create(filter.filter(exchange, e -> {
+            forwarded.set(e);
+            return Mono.empty();
+        })).verifyComplete();
+
+        // 같은 추적 ID가 (1) PDP 질의와 (2) 백엔드 전달 요청 헤더로 그대로 흐른다(분산 추적).
+        assertThat(pdpRequestId.getValue()).isEqualTo("trace-xyz");
+        assertThat(forwarded.get().getRequest().getHeaders()
+                .getFirst(JwtAuthGlobalFilter.REQUEST_ID_HEADER)).isEqualTo("trace-xyz");
+        assertThat(exchange.getResponse().getHeaders()
+                .getFirst(JwtAuthGlobalFilter.REQUEST_ID_HEADER)).isEqualTo("trace-xyz");
     }
 
     private static Jwt sampleJwt() {

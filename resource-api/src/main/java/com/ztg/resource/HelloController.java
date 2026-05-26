@@ -3,6 +3,8 @@ package com.ztg.resource;
 import java.time.Instant;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +19,13 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api")
 public class HelloController {
 
+    private static final Logger log = LoggerFactory.getLogger(HelloController.class);
+
     /** 유효한 토큰이면 누구나(any authenticated). 토큰의 신원을 그대로 비춰준다. */
     @GetMapping("/hello")
     public Map<String, Object> hello(@AuthenticationPrincipal Jwt jwt) {
+        // 게이트웨이가 전파한 요청ID(MDC)가 이 백엔드 로그에도 찍혀 같은 요청으로 상관된다(분산 추적).
+        log.info("serving /api/hello for subject={}", jwt.getClaimAsString("preferred_username"));
         return Map.of(
                 "service", "resource-api",
                 "message", "hello from zero-trust-gateway",
@@ -35,6 +41,7 @@ public class HelloController {
      */
     @GetMapping("/payroll")
     public Map<String, Object> payroll(@AuthenticationPrincipal Jwt jwt) {
+        log.info("serving /api/payroll for subject={}", jwt.getClaimAsString("preferred_username"));
         return Map.of(
                 "service", "resource-api",
                 "message", "payroll data (PDP-authorized)",

@@ -6,6 +6,7 @@ plugins {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation project(':common')   // 요청추적 RequestIdFilter(분산 추적) 공유
     // JWT(Bearer) 검증 — issuer의 JWKS로 서명 검증, iss/exp 등 클레임 검증
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     // 관측: actuator로 /actuator/prometheus 노출, micrometer로 기본 지표 수집

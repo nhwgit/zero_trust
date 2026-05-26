@@ -1,14 +1,18 @@
 package com.ztg.resource;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+
+import com.ztg.common.web.RequestIdFilter;
 
 /**
  * Phase 1 — Resource Server 보안 설정.
@@ -47,6 +51,18 @@ public class SecurityConfig {
                 // PEP(게이트웨이) 경유 강제: 토큰 인증보다 먼저 신뢰 헤더를 확인해 우회 직접호출을 차단.
                 .addFilterBefore(new GatewayTrustFilter(trustSecret), BearerTokenAuthenticationFilter.class);
         return http.build();
+    }
+
+    /**
+     * 요청 추적 ID 필터를 보안 필터체인보다 먼저 등록한다(HIGHEST_PRECEDENCE).
+     * 게이트웨이가 전파한 {@code X-Request-Id}를 MDC에 실어, 토큰 거부(401)나 신뢰헤더
+     * 거부(403) 로그까지 같은 ID로 상관되게 한다(분산 추적).
+     */
+    @Bean
+    FilterRegistrationBean<RequestIdFilter> requestIdFilter() {
+        FilterRegistrationBean<RequestIdFilter> reg = new FilterRegistrationBean<>(new RequestIdFilter());
+        reg.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        return reg;
     }
 
     /** realm_access.roles → ROLE_* 권한으로 매핑하는 변환기를 토큰 인증에 연결한다. */

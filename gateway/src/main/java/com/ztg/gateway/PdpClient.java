@@ -6,6 +6,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import com.ztg.common.DecisionRequest;
 import com.ztg.common.DecisionResponse;
+import com.ztg.common.web.RequestId;
 
 import reactor.core.publisher.Mono;
 
@@ -26,9 +27,11 @@ public class PdpClient {
         this.webClient = builder.baseUrl(pdpBaseUri).build();
     }
 
-    public Mono<DecisionResponse> decide(DecisionRequest request) {
+    /** PDP에 인가를 질의한다. {@code requestId}를 헤더로 실어 PDP/PIP 로그까지 상관되게 한다(분산 추적). */
+    public Mono<DecisionResponse> decide(DecisionRequest request, String requestId) {
         return webClient.post()
                 .uri("/decision")
+                .header(RequestId.HEADER, requestId)
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(DecisionResponse.class);

@@ -4,6 +4,12 @@ server:
 spring:
   application:
     name: resource-api
+
+# 분산 추적(Phase 4 Step 3): 모든 로그 라인에 요청 추적 ID([requestId])를 찍어
+# 게이트웨이가 전파한 X-Request-Id로 백엔드 로그까지 상관한다. RequestIdFilter가 MDC를 채운다.
+logging:
+  pattern:
+    level: "%5p [%X{requestId:-}]"
   security:
     oauth2:
       resourceserver:
