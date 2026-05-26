@@ -28,17 +28,22 @@ function SetAttr([string]$subject, [string]$dept, [bool]$trusted, [int]$risk) {
   Invoke-RestMethod -Method Put -Uri "http://localhost:8083/pip/attributes/$subject" -Body $body -ContentType "application/json" | Out-Null
 }
 
+# 헤더 값 정규화 — 같은 헤더가 여러 번 실리면(게이트웨이+백엔드가 각각 X-Request-Id를 set)
+# 배열/콤마문자열로 들어온다. 첫 값만 뽑아 단일 문자열로 만든다.
+function First-Header($v) {
+  if ($null -eq $v) { return $null }
+  return ([string](@($v)[0])).Split(',')[0].Trim()
+}
+
 # 요청을 보내고 (상태코드, 거부사유헤더, 요청ID헤더)를 함께 돌려준다. 5.1은 4xx/5xx에서 예외 → 직접 캐치.
 function Get-Resp([string]$url, [hashtable]$headers) {
   try {
     $r = Invoke-WebRequest -Uri $url -Headers $headers -Method Get -UseBasicParsing -TimeoutSec 10
-    return @{ code=[int]$r.StatusCode; reason=$r.Headers['X-Denied-Reason']; rid=$r.Headers['X-Request-Id'] }
+    return @{ code=[int]$r.StatusCode; reason=(First-Header $r.Headers['X-Denied-Reason']); rid=(First-Header $r.Headers['X-Request-Id']) }
   } catch {
     $resp = $_.Exception.Response
     if ($resp) {
-      $reason = $resp.Headers['X-Denied-Reason']
-      $rid    = $resp.Headers['X-Request-Id']
-      return @{ code=[int]$resp.StatusCode; reason=$reason; rid=$rid }
+      return @{ code=[int]$resp.StatusCode; reason=(First-Header $resp.Headers['X-Denied-Reason']); rid=(First-Header $resp.Headers['X-Request-Id']) }
     }
     return @{ code=-1; reason=$null; rid=$null }
   }
