@@ -103,6 +103,49 @@ class PolicyEngineTest {
     }
 
     @Test
+    void risk_score_exactly_at_threshold_denies() {
+        // 경계: 위험점수 == 임계치(80)도 차단되어야 한다(>= 의미 고정). 79는 통과해야 한다.
+        DecisionRequest req = new DecisionRequest("alice", "GET", "/api/hello", Map.of());
+
+        assertThat(engineAtHour(12).evaluate(req, new SubjectAttributes("alice", "finance", true, RISK_THRESHOLD)).decision())
+                .isEqualTo(Decision.DENY);
+        assertThat(engineAtHour(12).evaluate(req, new SubjectAttributes("alice", "finance", true, RISK_THRESHOLD - 1)).decision())
+                .isEqualTo(Decision.ALLOW);
+    }
+
+    @Test
+    void payroll_allowed_at_business_hour_start_boundary() {
+        // 경계: 시작 정각(09:00)은 업무시간 안이다(isBefore(start)가 false).
+        DecisionResponse res = engineAtHour(START).evaluate(
+                payrollRequest(),
+                new SubjectAttributes("alice", "finance", true, 10));
+
+        assertThat(res.decision()).isEqualTo(Decision.ALLOW);
+    }
+
+    @Test
+    void payroll_denied_at_business_hour_end_boundary() {
+        // 경계: 끝 정각(18:00)은 업무시간 밖이다(isBefore(end)가 false). 끝값은 배타적.
+        DecisionResponse res = engineAtHour(END).evaluate(
+                payrollRequest(),
+                new SubjectAttributes("alice", "finance", true, 10));
+
+        assertThat(res.decision()).isEqualTo(Decision.DENY);
+        assertThat(res.reason()).contains("business hours");
+    }
+
+    @Test
+    void payroll_denied_one_hour_before_business_hour_start() {
+        // 경계: 시작 직전(08:00)은 업무시간 밖이다.
+        DecisionResponse res = engineAtHour(START - 1).evaluate(
+                payrollRequest(),
+                new SubjectAttributes("alice", "finance", true, 10));
+
+        assertThat(res.decision()).isEqualTo(Decision.DENY);
+        assertThat(res.reason()).contains("business hours");
+    }
+
+    @Test
     void non_payroll_resource_allowed_by_default() {
         DecisionResponse res = engineAtHour(3).evaluate(  // 업무시간 밖이어도 payroll 정책과 무관
                 new DecisionRequest("alice", "GET", "/api/hello", Map.of()),
