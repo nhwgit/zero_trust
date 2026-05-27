@@ -23,6 +23,12 @@ ztg:
     trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}
     # PDP(정책결정) 위치. JWT 검증 통과 후 매 요청마다 여기에 인가를 질의한다.
     pdp-base-uri: ${PDP_BASE_URI:http://localhost:8084}
+    # PDP decision 캐싱: 같은 요청(subject+action+resource)의 직전 결정을 짧게 재사용해 PDP 왕복을 줄인다.
+    # ttl로 정책/위험 변화 반영 지연을 바운드한다(짧게). enabled=false로 끄면 같은 바이너리로 before 측정.
+    decision-cache:
+      enabled: ${DECISION_CACHE_ENABLED:true}
+      ttl: ${DECISION_CACHE_TTL:5s}
+      max-size: ${DECISION_CACHE_MAX_SIZE:10000}
 
 # 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
 management:
