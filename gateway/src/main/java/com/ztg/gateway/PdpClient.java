@@ -1,7 +1,10 @@
 package com.ztg.gateway;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.web.reactive.function.client.WebClientSsl;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import com.ztg.common.DecisionRequest;
@@ -16,6 +19,10 @@ import reactor.core.publisher.Mono;
  * <p>게이트웨이는 WebFlux 기반이므로 블로킹 호출을 섞지 않도록 논블로킹 {@link WebClient}로
  * PDP를 호출한다. 오류(PDP 다운 등)는 여기서 삼키지 않고 그대로 흘려보낸다 —
  * fail-close(판단 불가 → 차단)는 호출부({@link JwtAuthGlobalFilter})가 책임진다.
+ *
+ * <p><b>mTLS:</b> {@code ztg.gateway.pdp-ssl-bundle}이 설정되면(= mtls 프로파일) 해당 SSL 번들로
+ * Netty 클라를 구성해 자기 인증서를 제시하고 PDP를 CA로 검증한다(상호 TLS). 비어 있으면(기본/테스트)
+ * 평문 그대로다 — PDP_BASE_URI가 http면 TLS는 동작하지 않으므로 단위/e2e 테스트에 영향이 없다.
  */
 @Component
 public class PdpClient {
@@ -25,8 +32,20 @@ public class PdpClient {
 
     public PdpClient(WebClient.Builder builder,
                      @Value("${ztg.gateway.pdp-base-uri}") String pdpBaseUri,
+                     @Value("${ztg.gateway.pdp-ssl-bundle:}") String pdpSslBundle,
+                     ObjectProvider<WebClientSsl> sslProvider,
                      DecisionCache decisionCache) {
-        this.webClient = builder.baseUrl(pdpBaseUri).build();
+        builder.baseUrl(pdpBaseUri);
+        if (StringUtils.hasText(pdpSslBundle)) {
+            WebClientSsl ssl = sslProvider.getIfAvailable();
+            if (ssl == null) {
+                throw new IllegalStateException(
+                        "pdp-ssl-bundle '" + pdpSslBundle + "'이 설정됐으나 WebClientSsl을 쓸 수 없다");
+            }
+            // 클라 인증서(키스토어)+CA(트러스트스토어)를 Netty HttpClient에 적용 → mTLS.
+            builder.apply(ssl.fromBundle(pdpSslBundle));
+        }
+        this.webClient = builder.build();
         this.decisionCache = decisionCache;
     }
 

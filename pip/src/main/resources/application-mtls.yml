@@ -1,0 +1,32 @@
+# mtls 프로파일 — 서비스간 mTLS (Phase 6-A). 기본 프로파일(application.yml)은 평문 HTTP 그대로다.
+# 활성: SPRING_PROFILES_ACTIVE=mtls (up-mtls.ps1이 주입). 단위/통합테스트는 이 프로파일을 켜지 않는다.
+#
+# PIP는 데이터 플레인(8083)을 mTLS로 잠그고, PDP가 제시하는 클라 인증서를 CA로 검증한다(client-auth: need).
+# 관리 플레인(actuator/health/metrics)은 별도 평문 포트(8093)로 분리 — health 폴링/스크랩이 cert 없이 가능.
+spring:
+  ssl:
+    bundle:
+      jks:
+        ztg-pip:
+          # 서버 인증서(PDP가 검증). bootRun 작업 디렉터리는 모듈 폴더라 상대경로가 빗나가므로
+          # 인증서 위치는 절대경로 env(ZTG_CERT_DIR, up-mtls.ps1이 주입)로 받는다.
+          keystore:
+            location: "file:${ZTG_CERT_DIR:docker/certs}/pip.p12"
+            password: ztg-mtls-pass
+            type: PKCS12
+          # 클라(PDP) 인증서를 검증할 신뢰 앵커 = 자체 CA.
+          truststore:
+            location: "file:${ZTG_CERT_DIR:docker/certs}/truststore.p12"
+            password: ztg-mtls-pass
+            type: PKCS12
+
+server:
+  ssl:
+    bundle: ztg-pip
+    client-auth: need   # 클라 인증서 필수 — 없으면 TLS 핸드셰이크 거부(zero-trust, 우회 직접호출 차단)
+
+management:
+  server:
+    port: 8093          # 관리 플레인 분리: 데이터(8083=mTLS) ↔ 관리(8093=평문)
+    ssl:
+      enabled: false    # 명시적으로 평문(메인 server.ssl을 상속하지 않도록 못박는다)

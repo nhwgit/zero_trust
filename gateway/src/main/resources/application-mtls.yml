@@ -1,0 +1,25 @@
+# mtls 프로파일 — 서비스간 mTLS (Phase 6-A). 기본 프로파일(application.yml)은 평문 HTTP 그대로다.
+# 활성: SPRING_PROFILES_ACTIVE=mtls (up-mtls.ps1이 주입). 단위/통합(e2e)테스트는 이 프로파일을 켜지 않는다.
+#
+# gateway는 외부 진입점(8080)은 평문 HTTP 그대로 두고(클라이언트/Keycloak 데모 호환),
+# 내부 PDP 호출만 mTLS로 잠근다 — 자기 인증서(gateway.p12)를 제시하고 PDP를 CA로 검증한다.
+spring:
+  ssl:
+    bundle:
+      jks:
+        ztg-gw:
+          # 인증서 위치는 절대경로 env(ZTG_CERT_DIR, up-mtls.ps1 주입)로 받는다(bootRun 작업 디렉터리=모듈 폴더).
+          keystore:
+            location: "file:${ZTG_CERT_DIR:docker/certs}/gateway.p12"
+            password: ztg-mtls-pass
+            type: PKCS12
+          truststore:
+            location: "file:${ZTG_CERT_DIR:docker/certs}/truststore.p12"
+            password: ztg-mtls-pass
+            type: PKCS12
+
+ztg:
+  gateway:
+    # PDP가 mTLS로 잠겼으므로 https + 클라 인증서(ztg-gw 번들)로 호출한다.
+    pdp-base-uri: https://localhost:8084
+    pdp-ssl-bundle: ztg-gw

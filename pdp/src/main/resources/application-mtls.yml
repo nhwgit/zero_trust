@@ -1,0 +1,38 @@
+# mtls 프로파일 — 서비스간 mTLS (Phase 6-A). 기본 프로파일(application.yml)은 평문 HTTP 그대로다.
+# 활성: SPRING_PROFILES_ACTIVE=mtls (up-mtls.ps1이 주입). 단위 테스트는 이 프로파일을 켜지 않는다.
+#
+# PDP는 두 역할을 동시에 한다:
+#   · 서버(8084): gateway가 제시하는 클라 인증서를 CA로 검증(client-auth: need).
+#   · 클라: PIP(8083=mTLS) 호출 시 자기 인증서(pdp.p12)를 제시 → 같은 번들 ztg-pdp 재사용.
+# 관리 플레인(actuator/health/metrics)은 별도 평문 포트(8094)로 분리.
+spring:
+  ssl:
+    bundle:
+      jks:
+        ztg-pdp:
+          # 인증서 위치는 절대경로 env(ZTG_CERT_DIR, up-mtls.ps1 주입)로 받는다(bootRun 작업 디렉터리=모듈 폴더).
+          keystore:
+            location: "file:${ZTG_CERT_DIR:docker/certs}/pdp.p12"
+            password: ztg-mtls-pass
+            type: PKCS12
+          truststore:
+            location: "file:${ZTG_CERT_DIR:docker/certs}/truststore.p12"
+            password: ztg-mtls-pass
+            type: PKCS12
+
+server:
+  ssl:
+    bundle: ztg-pdp
+    client-auth: need   # gateway 클라 인증서 필수 — 없으면 거부(우회 직접호출 차단)
+
+management:
+  server:
+    port: 8094          # 관리 플레인 분리: 데이터(8084=mTLS) ↔ 관리(8094=평문)
+    ssl:
+      enabled: false
+
+ztg:
+  pdp:
+    # PIP도 mTLS로 잠겼으므로 https + 클라 인증서(ztg-pdp 번들)로 호출한다.
+    pip-base-uri: https://localhost:8083
+    pip-ssl-bundle: ztg-pdp
