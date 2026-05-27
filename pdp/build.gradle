@@ -6,6 +6,9 @@ plugins {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    // PDP→PIP 호출용 RestClient의 풀드 커넥션 매니저(keep-alive). 미적용 시 요청마다 새 TCP 연결을
+    // 열어 고부하에서 임시 포트가 고갈되고("Address already in use") PIP 조회가 실패→fail-close 폭증.
+    implementation 'org.apache.httpcomponents.client5:httpclient5'
     implementation project(':common')   // Decision* / SubjectAttributes 공유 DTO
     // 관측: actuator로 /actuator/prometheus 노출, micrometer로 PDP 판단 지표 수집
     implementation 'org.springframework.boot:spring-boot-starter-actuator'

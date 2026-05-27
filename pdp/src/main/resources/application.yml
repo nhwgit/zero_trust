@@ -20,6 +20,13 @@ ztg:
     business-hour-end: ${BUSINESS_HOUR_END:18}
     # 위험점수 임계치(이상이면 차단). 위험적응 인가 데모용.
     risk-threshold: ${RISK_THRESHOLD:80}
+    # PIP 호출 RestClient의 커넥션 풀(keep-alive). 미적용 시 고부하에서 임시 포트 고갈→fail-close 폭증.
+    # max-per-route 기본 5는 동시 부하 대비 과소 → 상향. 자세한 이유는 HttpClientConfig 참조.
+    pip-pool:
+      max-total: ${PIP_POOL_MAX_TOTAL:200}
+      max-per-route: ${PIP_POOL_MAX_PER_ROUTE:200}
+      connect-timeout-ms: ${PIP_POOL_CONNECT_TIMEOUT_MS:2000}
+      socket-timeout-ms: ${PIP_POOL_SOCKET_TIMEOUT_MS:5000}
 
 # 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
 management:
