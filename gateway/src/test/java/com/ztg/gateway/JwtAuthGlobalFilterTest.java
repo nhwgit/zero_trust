@@ -6,7 +6,10 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
@@ -50,7 +53,11 @@ class JwtAuthGlobalFilterTest {
     private final ReactiveJwtDecoder decoder = mock(ReactiveJwtDecoder.class);
     private final PdpClient pdpClient = mock(PdpClient.class);
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    private final JwtAuthGlobalFilter filter = new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, registry);
+    private final SubjectRateObserver rateObserver = new SubjectRateObserver(Duration.ofSeconds(10));
+    // 09시(UTC)로 고정 — hour-of-day 신호를 결정적으로 검증한다.
+    private final Clock clock = Clock.fixed(Instant.parse("2026-06-01T09:00:00Z"), ZoneId.of("UTC"));
+    private final JwtAuthGlobalFilter filter =
+            new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, registry, rateObserver, clock);
 
     @Test
     void missing_token_is_401_and_does_not_forward() {
@@ -252,6 +259,46 @@ class JwtAuthGlobalFilterTest {
                 .getFirst(JwtAuthGlobalFilter.REQUEST_ID_HEADER)).isEqualTo("trace-xyz");
         assertThat(exchange.getResponse().getHeaders()
                 .getFirst(JwtAuthGlobalFilter.REQUEST_ID_HEADER)).isEqualTo("trace-xyz");
+    }
+
+    @Test
+    void observed_risk_signals_are_carried_in_decision_context() {
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        ArgumentCaptor<DecisionRequest> sent = ArgumentCaptor.forClass(DecisionRequest.class);
+        when(pdpClient.decide(sent.capture(), anyString()))
+                .thenReturn(Mono.just(DecisionResponse.allow("ok")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/hello")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
+                        .header(JwtAuthGlobalFilter.FORWARDED_FOR_HEADER, "203.0.113.7, 10.0.0.1"));
+
+        StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
+
+        // 게이트웨이가 관측한 IP(XFF 첫 홉)·레이트·시각이 PDP 질의 context에 RiskSignals 키로 실린다.
+        java.util.Map<String, String> ctx = sent.getValue().context();
+        assertThat(ctx.get(com.ztg.common.RiskSignals.CTX_SOURCE_IP)).isEqualTo("203.0.113.7");
+        assertThat(ctx.get(com.ztg.common.RiskSignals.CTX_REQUESTS_IN_WINDOW)).isEqualTo("1");
+        assertThat(ctx.get(com.ztg.common.RiskSignals.CTX_HOUR_OF_DAY)).isEqualTo("9");
+    }
+
+    @Test
+    void requests_in_window_increases_across_repeated_calls_by_same_subject() {
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        ArgumentCaptor<DecisionRequest> sent = ArgumentCaptor.forClass(DecisionRequest.class);
+        when(pdpClient.decide(sent.capture(), anyString()))
+                .thenReturn(Mono.just(DecisionResponse.allow("ok")));
+
+        for (int i = 0; i < 3; i++) {
+            MockServerWebExchange exchange = MockServerWebExchange.from(
+                    MockServerHttpRequest.get("/api/hello")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer good-token"));
+            StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
+        }
+
+        // 같은 주체(alice)가 윈도우 안에서 거듭 호출하면 레이트가 1→2→3으로 누적된다.
+        assertThat(sent.getAllValues()).extracting(
+                        r -> r.context().get(com.ztg.common.RiskSignals.CTX_REQUESTS_IN_WINDOW))
+                .containsExactly("1", "2", "3");
     }
 
     private static Jwt sampleJwt() {

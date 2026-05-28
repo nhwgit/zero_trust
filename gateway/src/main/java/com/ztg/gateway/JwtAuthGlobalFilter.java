@@ -1,5 +1,9 @@
 package com.ztg.gateway;
 
+import java.net.InetSocketAddress;
+import java.time.Clock;
+import java.time.LocalTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -23,6 +27,7 @@ import org.springframework.web.server.ServerWebExchange;
 
 import com.ztg.common.DecisionRequest;
 import com.ztg.common.DecisionResponse;
+import com.ztg.common.RiskSignals;
 import com.ztg.common.web.RequestId;
 
 import reactor.core.publisher.Mono;
@@ -56,6 +61,8 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     private static final String BEARER_PREFIX = "Bearer ";
     /** PDP 호출 실패(fail-close)로 만든 DENY 사유의 접두어. 거부 원인(cause) 분류에 쓴다. */
     static final String PDP_UNAVAILABLE_PREFIX = "PDP unavailable: ";
+    /** 클라이언트와 게이트웨이 사이 프록시가 실제 출발지를 남기는 표준 헤더(첫 홉이 원 클라이언트). */
+    static final String FORWARDED_FOR_HEADER = "X-Forwarded-For";
     /** 요청 ID를 교환 속성으로 실어 reject/forward 경로에서 공유하기 위한 키. */
     private static final String REQUEST_ID_ATTR = JwtAuthGlobalFilter.class.getName() + ".requestId";
 
@@ -65,15 +72,21 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     private final PdpClient pdpClient;
     private final String trustSecret;
     private final MeterRegistry meterRegistry;
+    private final SubjectRateObserver rateObserver;
+    private final Clock clock;
 
     JwtAuthGlobalFilter(org.springframework.security.oauth2.jwt.ReactiveJwtDecoder jwtDecoder,
                         PdpClient pdpClient,
                         @Value("${ztg.gateway.trust-secret}") String trustSecret,
-                        MeterRegistry meterRegistry) {
+                        MeterRegistry meterRegistry,
+                        SubjectRateObserver rateObserver,
+                        Clock clock) {
         this.jwtDecoder = jwtDecoder;
         this.pdpClient = pdpClient;
         this.trustSecret = trustSecret;
         this.meterRegistry = meterRegistry;
+        this.rateObserver = rateObserver;
+        this.clock = clock;
     }
 
     @Override
@@ -101,7 +114,8 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         String method = exchange.getRequest().getMethod().name();
         String path = exchange.getRequest().getPath().value();
         String requestId = requestIdOf(exchange);
-        DecisionRequest request = new DecisionRequest(subject, method, path, Map.of());
+        // PEP가 본 요청 맥락(출발지 IP·레이트·시각)을 위험 신호로 실어 PDP→PIP까지 전달한다(README 결정 #3).
+        DecisionRequest request = new DecisionRequest(subject, method, path, observeRiskContext(exchange, subject));
 
         // PDP 호출 지연을 측정한다(p99는 application.yml의 히스토그램 설정으로 산출).
         Timer.Sample sample = Timer.start(meterRegistry);
@@ -146,6 +160,49 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     private static String subjectOf(Jwt jwt) {
         String username = jwt.getClaimAsString("preferred_username");
         return username != null ? username : jwt.getSubject();
+    }
+
+    /**
+     * 이번 요청의 위험 신호를 관측해 {@link DecisionRequest#context()}에 실을 맵으로 만든다.
+     *
+     * <ul>
+     *   <li><b>source-ip</b>: 출발지 IP. 프록시가 있으면 {@code X-Forwarded-For} 첫 홉, 없으면 소켓 원격주소.
+     *       PIP가 직전 관측과 비교해 IP 변화를 가중하고, 캐시 키에도 반영돼 <b>새 IP는 자동 미스</b>가 된다.</li>
+     *   <li><b>requests-in-window</b>: 이 주체의 슬라이딩 윈도우 요청 수(레이트 급증 신호). 매 요청 달라지는
+     *       휘발성 값이라 캐시 키에선 제외한다({@link DecisionCache} 결정 #3) — 급증은 epoch 무효화(step 4)로 처리.</li>
+     *   <li><b>hour-of-day</b>: 요청 시각의 시(업무시간 외 신호). 주입 시계로 산출해 테스트에서 고정 가능.</li>
+     * </ul>
+     *
+     * 신호 부재(IP 미상 등)는 키를 비워 두고, PDP/PIP 쪽에서 중립값으로 폴백한다(부재는 가중 아님).
+     */
+    private Map<String, String> observeRiskContext(ServerWebExchange exchange, String subject) {
+        Map<String, String> context = new LinkedHashMap<>();
+        String sourceIp = clientIp(exchange.getRequest());
+        if (sourceIp != null) {
+            context.put(RiskSignals.CTX_SOURCE_IP, sourceIp);
+        }
+        // 게이트웨이는 캐시 히트 포함 모든 요청을 보므로 여기서 레이트를 센다(권위 관측자).
+        int requestsInWindow = rateObserver.record(subject);
+        context.put(RiskSignals.CTX_REQUESTS_IN_WINDOW, Integer.toString(requestsInWindow));
+        context.put(RiskSignals.CTX_HOUR_OF_DAY, Integer.toString(LocalTime.now(clock).getHour()));
+        return context;
+    }
+
+    /**
+     * 출발지 IP를 고른다: {@code X-Forwarded-For}가 있으면 첫(가장 왼쪽) 항목 = 원 클라이언트,
+     * 없으면 TCP 소켓의 원격주소. 둘 다 없으면 {@code null}(신호 부재).
+     */
+    private static String clientIp(ServerHttpRequest request) {
+        String forwarded = request.getHeaders().getFirst(FORWARDED_FOR_HEADER);
+        if (forwarded != null && !forwarded.isBlank()) {
+            // "client, proxy1, proxy2" → 첫 홉만. 프록시가 덧붙이므로 가장 왼쪽이 원 클라이언트다.
+            return forwarded.split(",", 2)[0].trim();
+        }
+        InetSocketAddress remote = request.getRemoteAddress();
+        if (remote != null && remote.getAddress() != null) {
+            return remote.getAddress().getHostAddress();
+        }
+        return null;
     }
 
     /**

@@ -1,5 +1,7 @@
 package com.ztg.gateway;
 
+import java.time.Clock;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -48,6 +50,15 @@ public class GatewaySecurityConfig {
      * 자동 보안체인을 무력화한다. 게이트웨이의 인증/인가는 {@link JwtAuthGlobalFilter}가 맡으므로
      * 여기서는 모든 교환을 허용하고(httpBasic/formLogin 제거), CSRF도 끈다(순수 토큰 트래픽).
      */
+    /**
+     * 요청 시각(hour-of-day) 위험 신호를 산출하는 시계. 빈으로 분리해 테스트에서 고정 시계로
+     * 대체할 수 있게 한다(업무시간 외 신호의 결정적 검증). 기본은 시스템 기본 타임존.
+     */
+    @Bean
+    Clock clock() {
+        return Clock.systemDefaultZone();
+    }
+
     @Bean
     SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
         return http
