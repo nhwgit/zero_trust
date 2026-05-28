@@ -24,7 +24,8 @@ $storePass = 'ztg-mtls-pass'
 $validity  = 3650           # 데모: 10년(회전 데모는 범위 밖)
 $keyalg    = 'RSA'
 $keysize   = '2048'
-$san       = 'san=dns:localhost,ip:127.0.0.1'   # 루프백(localhost/127.0.0.1)으로만 호출
+# SAN은 서비스별로 구성한다(아래 루프). 컨테이너 네트워크에선 서비스 DNS명(pdp/pip/gateway)으로,
+# 호스트 bootRun에선 localhost로 부르므로 둘 다 넣어 양쪽에서 호스트네임 검증이 통과되게 한다.
 
 if (Test-Path (Join-Path $certDir 'ca.p12')) {
   Write-Host "certs/ 이미 존재 — 생성 건너뜀 (재생성하려면 docker/certs/ 삭제 후 재실행)" -ForegroundColor Yellow
@@ -47,6 +48,9 @@ foreach ($svc in 'gateway', 'pdp', 'pip') {
   $p12 = Join-Path $certDir "$svc.p12"
   $csr = Join-Path $certDir "$svc.csr"
   $crt = Join-Path $certDir "$svc.crt"
+
+  # 서비스 DNS명 + localhost 둘 다 SAN에 넣는다(컨테이너=서비스명, 호스트 bootRun=localhost).
+  $san = "san=dns:$svc,dns:localhost,ip:127.0.0.1"
 
   # 서비스 키쌍 → CSR → CA 서명 → (CA + 서명된 인증서) 키스토어에 주입
   Kt -genkeypair -alias $svc -keyalg $keyalg -keysize $keysize -validity $validity `
