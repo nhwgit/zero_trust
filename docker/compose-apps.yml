@@ -1,0 +1,100 @@
+# 핫패스 JVM 4개를 컨테이너로 (D2 — 패킷레벨 관측, 선택지 B).
+#
+# 왜: 평소 핫패스는 Windows bootRun(서로 localhost 루프백)이라 내부 mTLS를 WSL tcpdump가 못 본다.
+# 4개를 같은 도커 네트워크에 올리면 서비스간 통신이 리눅스 브리지를 타므로 tcpdump 하나로 mTLS까지 캡처된다.
+#
+# 사용: base와 합쳐서 띄운다(keycloak 재사용, 같은 default 네트워크 → 서비스명 DNS 해석).
+#   docker compose -f docker-compose.yml -f compose-apps.yml up -d --build keycloak gateway pdp pip resource-api
+# (up-mtls-docker.ps1이 jar 빌드·cert 재발급까지 묶어 수행한다. prometheus/grafana는 이 스택 범위 밖.)
+#
+# 핵심 함정 대응:
+#  · 인증서 SAN에 서비스 DNS명(gen-certs.ps1) — 컨테이너는 https://pdp:8084 처럼 서비스명으로 부른다.
+#  · issuer 불일치 — 토큰 iss는 localhost:8081 그대로 두고 JWKS 조회 URL만 keycloak:8080으로 분리 주입.
+#    (gateway=ZTG_GATEWAY_JWK_SET_URI / resource-api=SPRING_SECURITY_..._JWK_SET_URI)
+
+services:
+  # base의 keycloak에 restart 정책만 덧입힌다(base 파일은 다른 스모크용이라 그대로 둔다).
+  keycloak:
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ../gateway
+      dockerfile: ../docker/Dockerfile
+    image: ztg-gateway:mtls
+    container_name: ztg-gateway
+    restart: unless-stopped   # WSL VM이 유휴로 내려갔다 올라오면 dockerd가 컨테이너를 자동 복구
+    environment:
+      SPRING_PROFILES_ACTIVE: mtls
+      ZTG_CERT_DIR: /certs                                   # 마운트한 인증서 위치(application-mtls.yml가 참조)
+      PDP_BASE_URI: https://pdp:8084                         # 내부 호출은 서비스명(SAN=dns:pdp로 검증)
+      RESOURCE_API_URI: http://resource-api:8082             # 백엔드 라우팅 대상(평문)
+      KC_ISSUER_URI: http://localhost:8081/realms/ztg        # iss 검증 기준 — 토큰 iss 그대로(변경 금지)
+      ZTG_GATEWAY_JWK_SET_URI: http://keycloak:8080/realms/ztg/protocol/openid-connect/certs  # 키만 네트워크 내부에서 조회
+    ports:
+      - "8080:8080"                                          # 외부 진입점(평문) — 캡처 평문/TLS 대비용
+    volumes:
+      - ./certs:/certs:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      pdp:
+        condition: service_started
+      resource-api:
+        condition: service_started
+
+  pdp:
+    build:
+      context: ../pdp
+      dockerfile: ../docker/Dockerfile
+    image: ztg-pdp:mtls
+    container_name: ztg-pdp
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: mtls
+      ZTG_CERT_DIR: /certs
+      PIP_BASE_URI: https://pip:8083                         # 내부 호출은 서비스명(SAN=dns:pip로 검증)
+      BUSINESS_HOUR_START: "0"                               # 데모: /api/hello를 시간무관 ALLOW로(스모크 안정)
+      BUSINESS_HOUR_END: "24"
+    ports:
+      - "8084:8084"                                          # 데이터(mTLS) — 호스트 스모크의 우회차단/대조군 테스트용
+      - "8094:8094"                                          # 관리(평문) — health 폴링
+    volumes:
+      - ./certs:/certs:ro
+    depends_on:
+      pip:
+        condition: service_started
+
+  pip:
+    build:
+      context: ../pip
+      dockerfile: ../docker/Dockerfile
+    image: ztg-pip:mtls
+    container_name: ztg-pip
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: mtls
+      ZTG_CERT_DIR: /certs
+    ports:
+      - "8083:8083"                                          # 데이터(mTLS)
+      - "8093:8093"                                          # 관리(평문) — health 폴링
+    volumes:
+      - ./certs:/certs:ro
+
+  resource-api:
+    build:
+      context: ../resource-api
+      dockerfile: ../docker/Dockerfile
+    image: ztg-resource-api:mtls
+    container_name: ztg-resource-api
+    restart: unless-stopped
+    environment:
+      KC_ISSUER_URI: http://localhost:8081/realms/ztg        # iss 검증 기준(토큰 iss 그대로)
+      # jwk-set-uri를 issuer-uri와 함께 주면 키는 이 URL에서 받고 iss는 issuer-uri로 검증(Spring Boot 기본 동작).
+      # application.yml엔 두지 않는다 — 빈 기본값이면 @ConditionalOnProperty가 '설정됨'으로 보아 호스트 경로가 깨진다.
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/ztg/protocol/openid-connect/certs
+    ports:
+      - "8082:8082"
+    depends_on:
+      keycloak:
+        condition: service_healthy
