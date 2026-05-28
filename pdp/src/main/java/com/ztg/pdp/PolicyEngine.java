@@ -10,21 +10,27 @@ import org.springframework.stereotype.Component;
 
 import com.ztg.common.DecisionRequest;
 import com.ztg.common.DecisionResponse;
+import com.ztg.common.RiskAssessment;
 import com.ztg.common.SubjectAttributes;
 
 /**
- * ABAC 정책 엔진 — 요청 + 주체 속성 + 시각을 받아 ALLOW/DENY를 판단한다.
+ * ABAC 정책 엔진 — 요청 + 주체 속성 + <b>동적 위험 평가</b> + 시각을 받아 ALLOW/DENY를 판단한다.
  *
  * <p>평가 모델은 <b>deny-overrides</b>: 어느 정책이든 하나라도 DENY면 최종 DENY다.
  * 정책 순서:
  * <ol>
- *   <li><b>위험적응</b>: 위험점수가 임계치 이상이면 리소스 무관하게 DENY.</li>
+ *   <li><b>위험적응</b>: PIP가 산출한 {@link RiskAssessment#score()}가 임계치 이상이면 리소스 무관하게 DENY.</li>
  *   <li><b>payroll 정책</b>: {@code /api/payroll}는 finance 부서 + 업무시간 + 신뢰 디바이스에서만 허용.</li>
  *   <li><b>기본 허용</b>: 명시적 정책이 없는 리소스는 ALLOW(인증은 이미 게이트웨이에서 통과).</li>
  * </ol>
  *
- * <p>설계 메모: 시각은 {@link Clock}로 주입한다(테스트에서 고정 가능). 업무시간/위험임계치는
- * 설정으로 뺀다 — 완료 기준("조건을 바꾸면 결과가 ALLOW↔DENY로 바뀐다")을 코드 수정 없이 시연하기 위함.
+ * <p>설계 메모(README 결정 #2): 위험 <b>점수 산출은 PIP</b>(정보점), 여기 PDP(결정점)는 <b>임계만</b>
+ * 적용한다. 그래서 정적 {@code attrs.riskScore()}가 아니라 동적 {@link RiskAssessment}를 임계와 비교하고,
+ * DENY 사유에 {@link RiskAssessment#explain()}(기여 신호 내역)을 그대로 실어 설명 가능한 거부를 만든다.
+ * 모든 결정에 위험점수+{@code epoch}를 실어 게이트웨이가 epoch를 학습(능동 무효화)하게 한다.
+ *
+ * <p>시각은 {@link Clock}로 주입한다(테스트에서 고정 가능). 업무시간/위험임계치는 설정으로 뺀다 —
+ * 완료 기준("조건을 바꾸면 결과가 ALLOW↔DENY로 바뀐다")을 코드 수정 없이 시연하기 위함.
  */
 @Component
 public class PolicyEngine {
@@ -47,23 +53,32 @@ public class PolicyEngine {
         this.riskThreshold = riskThreshold;
     }
 
-    public DecisionResponse evaluate(DecisionRequest request, SubjectAttributes attrs) {
-        // 1) 위험적응: 위험점수가 임계치를 넘으면 어떤 리소스든 차단.
-        if (attrs.riskScore() >= riskThreshold) {
+    /**
+     * @param request 인가 요청
+     * @param attrs   PIP 저장 속성(부서/디바이스) — payroll 정책 입력
+     * @param risk    PIP가 산출한 동적 위험 평가 — 위험적응 정책 입력(임계만 여기서 적용)
+     * @param epoch   주체의 현재 위험 epoch — 결정에 실어 게이트웨이로 역전파
+     */
+    public DecisionResponse evaluate(DecisionRequest request, SubjectAttributes attrs,
+                                     RiskAssessment risk, long epoch) {
+        // 1) 위험적응: PIP가 낸 동적 점수가 임계치를 넘으면 어떤 리소스든 차단(사유=점수 내역).
+        if (risk.score() >= riskThreshold) {
             return DecisionResponse.deny(
-                    "risk score %d >= threshold %d".formatted(attrs.riskScore(), riskThreshold));
+                    "risk score %d >= threshold %d [%s]".formatted(risk.score(), riskThreshold, risk.explain()),
+                    risk, epoch);
         }
 
         // 2) payroll: 부서/업무시간/디바이스 조건을 모두 만족해야 허용.
         if (request.resource() != null && request.resource().startsWith(PAYROLL_PREFIX)) {
-            return evaluatePayroll(attrs);
+            return evaluatePayroll(attrs, risk, epoch);
         }
 
         // 3) 기본 허용.
-        return DecisionResponse.allow("no policy restricts %s; allowed by default".formatted(request.resource()));
+        return DecisionResponse.allow(
+                "no policy restricts %s; allowed by default".formatted(request.resource()), risk, epoch);
     }
 
-    private DecisionResponse evaluatePayroll(SubjectAttributes attrs) {
+    private DecisionResponse evaluatePayroll(SubjectAttributes attrs, RiskAssessment risk, long epoch) {
         List<String> failures = new ArrayList<>();
 
         if (!FINANCE.equalsIgnoreCase(attrs.department())) {
@@ -79,9 +94,10 @@ public class PolicyEngine {
         }
 
         if (failures.isEmpty()) {
-            return DecisionResponse.allow("payroll access granted (finance, business hours, trusted device)");
+            return DecisionResponse.allow(
+                    "payroll access granted (finance, business hours, trusted device)", risk, epoch);
         }
-        return DecisionResponse.deny("payroll denied: " + String.join("; ", failures));
+        return DecisionResponse.deny("payroll denied: " + String.join("; ", failures), risk, epoch);
     }
 
     private boolean withinBusinessHours(LocalTime now) {
