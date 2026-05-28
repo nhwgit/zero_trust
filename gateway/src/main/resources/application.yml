@@ -28,6 +28,9 @@ ztg:
     decision-cache:
       enabled: ${DECISION_CACHE_ENABLED:true}
       ttl: ${DECISION_CACHE_TTL:5s}
+      # 위험적응 TTL: 점수가 high-risk-score 이상인 결정은 짧게 캐싱해 더 자주 재평가한다(고위험=짧게).
+      high-risk-ttl: ${DECISION_CACHE_HIGH_RISK_TTL:1s}
+      high-risk-score: ${DECISION_CACHE_HIGH_RISK_SCORE:50}
       max-size: ${DECISION_CACHE_MAX_SIZE:10000}
 
 # 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
