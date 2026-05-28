@@ -21,5 +21,6 @@ spring:
 ztg:
   gateway:
     # PDP가 mTLS로 잠겼으므로 https + 클라 인증서(ztg-gw 번들)로 호출한다.
-    pdp-base-uri: https://localhost:8084
+    # 기본은 호스트 bootRun용 localhost. 컨테이너에선 서비스명(https://pdp:8084)을 env로 주입한다.
+    pdp-base-uri: ${PDP_BASE_URI:https://localhost:8084}
     pdp-ssl-bundle: ztg-gw

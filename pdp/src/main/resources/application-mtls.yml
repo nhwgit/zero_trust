@@ -34,5 +34,6 @@ management:
 ztg:
   pdp:
     # PIP도 mTLS로 잠겼으므로 https + 클라 인증서(ztg-pdp 번들)로 호출한다.
-    pip-base-uri: https://localhost:8083
+    # 기본은 호스트 bootRun용 localhost. 컨테이너에선 서비스명(https://pip:8083)을 env로 주입한다.
+    pip-base-uri: ${PIP_BASE_URI:https://localhost:8083}
     pip-ssl-bundle: ztg-pdp
