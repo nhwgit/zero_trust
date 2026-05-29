@@ -30,6 +30,12 @@ import com.ztg.common.RiskSignals;
  * 그 주체의 <b>옛 엔트리는 모두 한 번에 키-아웃</b>(다른 epoch라 더는 조회되지 않음) → 같은 세션에서 <b>재로그인
  * 없이</b> 위험 상승이 다음 결정부터 반영된다. 보조 인덱스 없이 O(1)이며, 키-아웃된 고아는 lazy/크기상한으로 회수된다.
  *
+ * <p><b>다중 게이트웨이(Redis fan-out):</b> 위 lazy 학습은 <i>이 노드</i>가 그 주체로 PDP를 한 번 다녀와야
+ * 새 epoch를 안다. 노드가 여럿이면 위험을 유발하지 않은 다른 노드는 TTL 동안 옛 ALLOW를 계속 히트로 낸다.
+ * 그래서 epoch 권위자(PIP)가 epoch를 올리는 순간 Redis pub/sub으로 fan-out하고, 각 노드는
+ * {@link #applyRemoteEpoch}로 즉시 학습 epoch를 끌어올려 <b>전 노드의 캐시를 동시에</b> 키-아웃한다.
+ * pub/sub 유실 시에도 lazy 학습+TTL이 백스톱이라 무효화는 보장된다([[EpochFanout]]).
+ *
  * <p><b>위험적응 TTL:</b> 적재 TTL은 결정의 위험 점수에 따라 달라진다 — 위험이 높을수록 <b>짧게</b> 캐싱해
  * 더 자주 재평가한다({@code high-risk-score} 이상 → {@code high-risk-ttl}). 위험 변화의 능동 무효화(epoch)와
  * 별개로, 점수가 높은 결정이 오래 굳지 않게 하는 시간 기반 안전망이다.
@@ -76,6 +82,7 @@ class DecisionCache {
     private final Counter hits;
     private final Counter misses;
     private final Counter bypasses;
+    private final Counter fanoutApplied;
 
     DecisionCache(@Value("${ztg.gateway.decision-cache.enabled:true}") boolean enabled,
                   @Value("${ztg.gateway.decision-cache.ttl:5s}") Duration ttl,
@@ -102,6 +109,8 @@ class DecisionCache {
         this.misses = meterRegistry.counter("ztg.pdp.cache", "result", "miss");
         // 레이트 밴드 변화로 인한 강제 재평가(능동 무효화 트리거). 콜드 미스와 구분해 따로 센다.
         this.bypasses = meterRegistry.counter("ztg.pdp.cache", "result", "bypass");
+        // 다른 GW가 유발한 epoch 상승을 Redis fan-out으로 받아 적용한 횟수(원격 무효화 가시성).
+        this.fanoutApplied = meterRegistry.counter("ztg.pdp.cache", "result", "fanout");
         meterRegistry.gauge("ztg.pdp.cache.size", store, java.util.Map::size);
     }
 
@@ -154,6 +163,22 @@ class DecisionCache {
     /** 주체의 현재 epoch를 더 큰 값으로만 갱신한다(역전파 순서 뒤바뀜·재시도에도 단조 보장). */
     private void learnEpoch(String subject, long epoch) {
         knownEpochs.merge(subject, epoch, Math::max);
+    }
+
+    /**
+     * <b>다른 게이트웨이가 유발한</b> epoch 상승을 Redis fan-out으로 받아 적용한다(다중 GW 능동 무효화).
+     * 이 노드가 그 주체의 PDP 왕복을 아직 안 했어도, 학습된 epoch가 즉시 올라 그 주체의 옛 엔트리가
+     * 한 번에 키-아웃된다 → 위험을 유발하지 않은 노드도 <b>재로그인 없이</b> 다음 요청부터 재평가한다.
+     *
+     * <p>{@link #learnEpoch}와 같은 단조(max) 학습이라 옛/중복 메시지는 무시된다(부활 없음). 실제로
+     * epoch가 전진했을 때만 지표를 올려, lazy 학습으로 이미 알던 값의 재수신과 구분한다.
+     */
+    void applyRemoteEpoch(String subject, long epoch) {
+        long prior = knownEpochs.getOrDefault(subject, 0L);
+        learnEpoch(subject, epoch);
+        if (epoch > prior) {
+            fanoutApplied.increment();
+        }
     }
 
     /** 위험 점수가 임계 이상이면 짧은 TTL(자주 재평가), 아니면 기본 TTL. */

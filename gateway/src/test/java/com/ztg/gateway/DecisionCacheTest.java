@@ -173,6 +173,37 @@ class DecisionCacheTest {
                 .isFalse();
     }
 
+    @Test
+    void remoteEpochFromFanoutKeysOutPriorEntriesWithoutLocalPdpRoundtrip() {
+        // 다중 GW 능동 무효화: 이 노드가 alice로 PDP를 다녀온 적 없어도(epoch 학습은 0), 다른 GW가 유발한
+        // epoch 상승을 Redis fan-out으로 받으면 그 주체의 옛 ALLOW가 즉시 키-아웃돼 다음 조회는 미스가 된다.
+        DecisionCache cache = cache(true);
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 0));
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();
+
+        // 다른 노드에서 위험이 올라 PIP가 epoch=1로 bump → fan-out 수신(이 노드는 PDP 왕복 없이 학습 epoch만 상승).
+        cache.applyRemoteEpoch("alice", 1L);
+
+        // 같은 세션·재로그인 없이 옛 epoch=0 엔트리는 더는 조회되지 않는다 → 미스(재평가 강제).
+        assertThat(cache.getIfPresent(request("alice", "/api/a"))).isNull();
+        // 다른 주체(bob)는 영향 없음 — fan-out은 주체별.
+        cache.put(request("bob", "/api/a"), decision(Decision.ALLOW, 10, 0));
+        assertThat(cache.getIfPresent(request("bob", "/api/a")).isAllowed()).isTrue();
+    }
+
+    @Test
+    void staleRemoteEpochDoesNotResurrectKeyedOutEntries() {
+        // fan-out 메시지가 순서 뒤바뀌거나 중복돼 더 낮은 epoch가 와도 단조 학습이라 되돌아가지 않는다.
+        DecisionCache cache = cache(true);
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 2));   // knownEpoch=2 학습
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();
+
+        cache.applyRemoteEpoch("alice", 1L);   // 뒤늦은 낮은 epoch — knownEpoch를 되돌리면 안 됨
+
+        // /a(epoch=2)는 여전히 살아 있다(낮은 fan-out이 학습 epoch를 깎지 못했다는 증거).
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();
+    }
+
     private static DecisionRequest requestWithCtx(String subject, String path, String ip, String rate) {
         return new DecisionRequest(subject, "GET", path, Map.of(
                 RiskSignals.CTX_SOURCE_IP, ip,

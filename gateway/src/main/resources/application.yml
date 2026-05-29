@@ -4,6 +4,14 @@ server:
 spring:
   application:
     name: gateway
+  # fan-out을 켤 때만 쓰는 Redis 연결(off면 미사용). 다중 GW가 같은 채널을 보도록 같은 Redis를 가리킨다.
+  # 구독은 백그라운드 스레드라 요청 핫패스를 막진 않지만, 기동 시 Redis 불통이 길게 매달리지 않게 짧게 잡는다.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: ${REDIS_TIMEOUT:200ms}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:200ms}
   cloud:
     gateway:
       routes:
@@ -38,6 +46,10 @@ ztg:
       high-risk-ttl: ${DECISION_CACHE_HIGH_RISK_TTL:1s}
       high-risk-score: ${DECISION_CACHE_HIGH_RISK_SCORE:50}
       max-size: ${DECISION_CACHE_MAX_SIZE:10000}
+  # 다중 GW 능동 무효화 fan-out(Redis pub/sub) 구독. 기본 off — 켜면 한 노드에서 오른 epoch가
+  # 모든 노드의 캐시를 동시에 키-아웃한다. off면 Redis에 연결하지 않는다(단일 GW/테스트 무영향).
+  fanout:
+    enabled: ${FANOUT_ENABLED:false}
 
 # 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
 management:

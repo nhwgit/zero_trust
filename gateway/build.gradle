@@ -22,6 +22,9 @@ dependencies {
     // 여기서는 자동 필터체인을 쓰지 않고 디코더만 꺼내 커스텀 필터에서 검증한다.
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     implementation project(':common')   // PDP 질의용 Decision* DTO
+    // 다중 GW 능동 무효화 fan-out 구독(Redis pub/sub). ztg.fanout.enabled=true일 때만 구독 컨테이너 기동 —
+    // 끄면(기본) Redis에 연결하지 않으므로 단일 GW/단위테스트는 Redis 없이 그대로 green.
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     // 관측: actuator로 /actuator/prometheus 노출, micrometer로 RED 지표(요청수/allow·deny/지연) 수집
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
