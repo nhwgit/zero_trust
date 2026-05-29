@@ -34,6 +34,14 @@ import com.ztg.common.RiskSignals;
  * 더 자주 재평가한다({@code high-risk-score} 이상 → {@code high-risk-ttl}). 위험 변화의 능동 무효화(epoch)와
  * 별개로, 점수가 높은 결정이 오래 굳지 않게 하는 시간 기반 안전망이다.
  *
+ * <p><b>레이트 밴드 변화 → 강제 바이패스(능동 무효화의 트리거):</b> 휘발성 레이트는 키에서 빠져 있어
+ * 캐시만으로는 급증을 못 잡는다 — 같은 IP에서 폭주가 시작돼도 키가 그대로라 옛 ALLOW가 계속 히트한다.
+ * 그래서 조회 시 이 주체의 레이트가 <b>밴드(임계 {@code burst-threshold} 초과 여부)를 넘나들면</b>(직전 관측 대비
+ * 전이) 그 한 요청을 <b>강제 미스</b>로 만들어 PDP 재평가를 유발한다. 그 재평가가 폭주 신호를 PIP까지 실어
+ * 보내 점수↑→epoch bump→옛 엔트리 키-아웃으로 이어진다 — <b>이것이 같은 IP 급증을 능동 무효화로 잇는 트리거</b>다.
+ * <b>엣지 트리거</b>(밴드가 바뀐 순간만)라 폭주가 지속되는 동안엔 다시 캐시가 동작한다(레벨 트리거였다면 폭주
+ * 내내 캐시가 죽어 부하 데모가 무너진다). 새 IP는 이 경로가 필요 없다 — 키에 IP가 남아 자동 미스→재평가다.
+ *
  * <p><b>왜 직접 구현(외부 캐시 라이브러리 미사용):</b> 부하 데모의 캐시는 핫 키 소수에 대한 짧은 TTL이면
  * 충분하고, TTL·무효화·크기상한을 코드에 그대로 드러내 "캐싱의 효과와 위험"을 보이는 게 학습 목적에 맞다.
  * 만료는 조회 시 lazy로 걷어내고, 크기상한을 둬 무한 증식을 막는다(데모 기준 단순화 — 정교한 LRU는 미구현).
@@ -56,42 +64,56 @@ class DecisionCache {
     private final ConcurrentHashMap<Key, Entry> store = new ConcurrentHashMap<>();
     /** 주체별 게이트웨이가 학습한 현재 epoch(능동 무효화 토큰). 단조 증가 — 더 큰 값만 채택. */
     private final ConcurrentHashMap<String, Long> knownEpochs = new ConcurrentHashMap<>();
+    /** 주체별 직전 레이트 밴드(true=폭주). 밴드가 바뀌는 순간만 강제 바이패스(엣지 트리거). */
+    private final ConcurrentHashMap<String, Boolean> lastBand = new ConcurrentHashMap<>();
     private final boolean enabled;
     private final long ttlNanos;
     private final long highRiskTtlNanos;
     private final int highRiskScore;
+    private final int burstThreshold;
     private final int maxSize;
     private final LongSupplier nanoClock;
     private final Counter hits;
     private final Counter misses;
+    private final Counter bypasses;
 
     DecisionCache(@Value("${ztg.gateway.decision-cache.enabled:true}") boolean enabled,
                   @Value("${ztg.gateway.decision-cache.ttl:5s}") Duration ttl,
                   @Value("${ztg.gateway.decision-cache.high-risk-ttl:1s}") Duration highRiskTtl,
                   @Value("${ztg.gateway.decision-cache.high-risk-score:50}") int highRiskScore,
+                  @Value("${ztg.gateway.rate.burst-threshold:60}") int burstThreshold,
                   @Value("${ztg.gateway.decision-cache.max-size:10000}") int maxSize,
                   MeterRegistry meterRegistry) {
-        this(enabled, ttl, highRiskTtl, highRiskScore, maxSize, meterRegistry, System::nanoTime);
+        this(enabled, ttl, highRiskTtl, highRiskScore, burstThreshold, maxSize, meterRegistry, System::nanoTime);
     }
 
     /** 테스트용 — 단조 시계를 주입해 위험적응 TTL 만료를 결정적으로 검증한다. */
-    DecisionCache(boolean enabled, Duration ttl, Duration highRiskTtl, int highRiskScore, int maxSize,
-                  MeterRegistry meterRegistry, LongSupplier nanoClock) {
+    DecisionCache(boolean enabled, Duration ttl, Duration highRiskTtl, int highRiskScore, int burstThreshold,
+                  int maxSize, MeterRegistry meterRegistry, LongSupplier nanoClock) {
         this.enabled = enabled;
         this.ttlNanos = ttl.toNanos();
         this.highRiskTtlNanos = highRiskTtl.toNanos();
         this.highRiskScore = highRiskScore;
+        this.burstThreshold = burstThreshold;
         this.maxSize = maxSize;
         this.nanoClock = nanoClock;
         // 캐시 히트율을 보이는 RED 보조 지표(히트면 PDP 호출이 통째로 빠진다).
         this.hits = meterRegistry.counter("ztg.pdp.cache", "result", "hit");
         this.misses = meterRegistry.counter("ztg.pdp.cache", "result", "miss");
+        // 레이트 밴드 변화로 인한 강제 재평가(능동 무효화 트리거). 콜드 미스와 구분해 따로 센다.
+        this.bypasses = meterRegistry.counter("ztg.pdp.cache", "result", "bypass");
         meterRegistry.gauge("ztg.pdp.cache.size", store, java.util.Map::size);
     }
 
     /** 살아 있는(미만료) 결정이 있으면 반환, 없으면 {@code null}. 캐시가 꺼져 있으면 항상 {@code null}(지표 미집계). */
     DecisionResponse getIfPresent(DecisionRequest request) {
         if (!enabled) {
+            return null;
+        }
+        // 레이트 밴드가 직전 관측과 달라졌으면(임계 넘나듦) 이 요청만 강제 미스로 만들어 재평가를 유발한다.
+        // 휘발성 레이트는 키에서 빠져 캐시가 급증을 못 잡으므로, 급증을 능동 무효화(epoch)로 잇는 트리거다.
+        if (rateBandChanged(request)) {
+            bypasses.increment();
             return null;
         }
         Key key = cacheKey(request, knownEpochs.getOrDefault(request.subject(), 0L));
@@ -137,6 +159,33 @@ class DecisionCache {
     /** 위험 점수가 임계 이상이면 짧은 TTL(자주 재평가), 아니면 기본 TTL. */
     private long ttlNanosFor(int score) {
         return score >= highRiskScore ? highRiskTtlNanos : ttlNanos;
+    }
+
+    /**
+     * 이 주체의 레이트 밴드(폭주 여부 = {@code requests-in-window > burst-threshold})가 직전 관측 대비
+     * <b>전이</b>했는지 본다. 전이면 {@code true}(→ 호출부가 강제 미스 처리). 관측할 때마다 현재 밴드를 기록하고
+     * 직전 밴드를 회수해 비교하므로 <b>엣지 트리거</b>다 — 밴드가 유지되는 동안엔 전이가 아니라 캐시가 정상 동작한다.
+     *
+     * <p>첫 관측(직전 밴드 없음)은 전이로 보지 않는다(기준만 세움). 레이트 신호가 없거나 숫자가 아니면 비교를
+     * 건너뛴다(부재는 트리거 아님). 레이트 자체는 캐시 키에서 제외돼 있어(결정 #3) 이 비교만이 급증을 캐시에 알린다.
+     */
+    private boolean rateBandChanged(DecisionRequest request) {
+        Map<String, String> context = request.context();
+        if (context == null) {
+            return false;
+        }
+        String raw = context.get(RiskSignals.CTX_REQUESTS_IN_WINDOW);
+        if (raw == null) {
+            return false;
+        }
+        boolean burst;
+        try {
+            burst = Integer.parseInt(raw.trim()) > burstThreshold;
+        } catch (NumberFormatException e) {
+            return false;   // 해석 불가한 레이트는 트리거로 쓰지 않는다(보수적)
+        }
+        Boolean prior = lastBand.put(request.subject(), burst);   // 기록하며 직전 밴드 회수(주체별)
+        return prior != null && prior != burst;                   // 첫 관측은 전이 아님
     }
 
     /**

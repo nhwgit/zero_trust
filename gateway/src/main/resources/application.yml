@@ -23,6 +23,12 @@ ztg:
     trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}
     # PDP(정책결정) 위치. JWT 검증 통과 후 매 요청마다 여기에 인가를 질의한다.
     pdp-base-uri: ${PDP_BASE_URI:http://localhost:8084}
+    # 주체별 요청 레이트 관측(PEP). 슬라이딩 윈도우 길이 + 폭주 판정 임계.
+    rate:
+      window: ${RATE_WINDOW:10s}
+      # 이 수를 넘으면 "폭주" 밴드. 밴드를 넘나드는 순간 캐시를 강제 바이패스해 재평가를 유발한다(능동 무효화 트리거).
+      # PIP의 risk.burst-threshold(점수 가중 기준)와 같은 값으로 둬, 강제 재평가가 곧 위험점수 상승으로 이어지게 한다.
+      burst-threshold: ${RATE_BURST_THRESHOLD:60}
     # PDP decision 캐싱: 같은 요청(subject+action+resource)의 직전 결정을 짧게 재사용해 PDP 왕복을 줄인다.
     # ttl로 정책/위험 변화 반영 지연을 바운드한다(짧게). enabled=false로 끄면 같은 바이너리로 before 측정.
     decision-cache:

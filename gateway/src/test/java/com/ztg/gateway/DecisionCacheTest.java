@@ -23,13 +23,13 @@ import com.ztg.common.RiskSignals;
  */
 class DecisionCacheTest {
 
-    /** 기본 캐시: base TTL 60s, 고위험 TTL 1s(score≥50), 크기 100. 시계 미주입(실시간, 만료 안 걸림). */
+    /** 기본 캐시: base TTL 60s, 고위험 TTL 1s(score≥50), 폭주 임계 60, 크기 100. 시계 미주입(실시간, 만료 안 걸림). */
     private static DecisionCache cache(boolean enabled) {
         return cache(enabled, System::nanoTime);
     }
 
     private static DecisionCache cache(boolean enabled, LongSupplier nanoClock) {
-        return new DecisionCache(enabled, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 100,
+        return new DecisionCache(enabled, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 60, 100,
                 new SimpleMeterRegistry(), nanoClock);
     }
 
@@ -139,6 +139,38 @@ class DecisionCacheTest {
 
         assertThat(cache.getIfPresent(request("bob", "/api/high"))).isNull();       // 고위험 만료
         assertThat(cache.getIfPresent(request("alice", "/api/low")).isAllowed()).isTrue();  // 저위험 생존
+    }
+
+    @Test
+    void rateBandCrossingForcesMissEvenWhenKeyMatches() {
+        // 휘발성 레이트는 키에서 빠져 있어 같은 IP·경로면 키가 동일하다. 그래도 레이트가 폭주 밴드로
+        // 전이하면(임계 60 초과) 그 한 요청은 강제 미스가 돼 재평가(PDP 왕복)를 유발해야 한다 = 급증 트리거.
+        DecisionCache cache = cache(true);
+        cache.put(requestWithCtx("alice", "/api/hello", "203.0.113.7", "1"), DecisionResponse.allow("ok"));
+
+        // 같은 키(IP·경로 동일, 레이트만 정상 밴드) → 히트, 그리고 직전 밴드=정상으로 기록된다.
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "5")).isAllowed())
+                .isTrue();
+        // 레이트가 폭주 밴드로 전이(5→99) → 키가 같아도 강제 미스(null) → 게이트웨이가 PDP를 다시 부른다.
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "99"))).isNull();
+    }
+
+    @Test
+    void sustainedBurstDoesNotKeepBypassing() {
+        // 엣지 트리거 확인: 밴드가 폭주로 한 번 전이한 뒤 폭주가 지속되면(밴드 불변) 더는 바이패스하지 않고
+        // 캐시가 정상 동작한다. 레벨 트리거였다면 폭주 내내 캐시가 죽어 부하 데모가 무너진다.
+        DecisionCache cache = cache(true);
+        // 정상 밴드 기준 설정.
+        cache.put(requestWithCtx("alice", "/api/hello", "203.0.113.7", "1"), DecisionResponse.allow("ok"));
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "1")).isAllowed())
+                .isTrue();
+        // 정상→폭주 전이: 강제 미스. 이 미스가 유발한 재평가 결과를 캐시에 적재했다고 가정.
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "99"))).isNull();
+        cache.put(requestWithCtx("alice", "/api/hello", "203.0.113.7", "99"), DecisionResponse.deny("burst"));
+
+        // 폭주 지속(밴드 불변=폭주) → 전이 아님 → 적재된 결정이 히트한다(엣지 트리거).
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "120")).isAllowed())
+                .isFalse();
     }
 
     private static DecisionRequest requestWithCtx(String subject, String path, String ip, String rate) {
