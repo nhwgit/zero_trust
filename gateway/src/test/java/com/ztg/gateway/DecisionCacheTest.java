@@ -117,6 +117,17 @@ class DecisionCacheTest {
     }
 
     @Test
+    void staleLowerEpochDecisionDoesNotClobberFresherEntry() {
+        // 위험 전이 경합(fail-close): 신선한 DENY(epoch1) 뒤에 뒤늦은 stale ALLOW(epoch0)가 도착해도
+        // 그 ALLOW는 옛 세대 키에 고립돼 DENY를 덮지 못한다 — put이 value.epoch()로 키잉하기 때문.
+        DecisionCache cache = cache(true);
+        cache.put(request("alice", "/api/a"), decision(Decision.DENY, 85, 1));   // 신선한 차단
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 0));  // 뒤늦은 stale 허용
+
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isFalse();
+    }
+
+    @Test
     void highRiskDecisionExpiresSoonerThanLowRisk() {
         // 위험적응 TTL: 고위험(score≥50)은 1s, 저위험은 60s. 2s 경과 후 고위험만 만료된다.
         AtomicLong nanos = new AtomicLong(1_000_000_000L);

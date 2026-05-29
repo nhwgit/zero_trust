@@ -94,7 +94,7 @@ class DecisionCache {
         if (!enabled) {
             return null;
         }
-        Key key = cacheKey(request);
+        Key key = cacheKey(request, knownEpochs.getOrDefault(request.subject(), 0L));
         Entry entry = store.get(key);
         // (now - expiresAt) >= 0 이면 만료. 차이로 비교해 nanoTime 래핑에도 안전하게 판정한다.
         if (entry == null || nanoClock.getAsLong() - entry.expiresAtNanos() >= 0) {
@@ -110,15 +110,19 @@ class DecisionCache {
 
     /**
      * 결정을 위험적응 TTL 동안 캐싱한다. 적재 전에 결정이 운반한 {@link DecisionResponse#epoch()}를 학습해
-     * (주체별 단조 증가) 키에 반영한다 — epoch가 올랐으면 이 주체의 옛 엔트리는 즉시 키-아웃된다(능동 무효화).
-     * 가득 찼고 새 키면 적재를 건너뛴다(데모 단순화).
+     * (주체별 단조 증가) 이후 조회의 키가 올바른 세대를 가리키게 한다 — epoch가 올랐으면 이 주체의 옛 엔트리는
+     * 즉시 키-아웃된다(능동 무효화). 가득 찼고 새 키면 적재를 건너뛴다(데모 단순화).
+     *
+     * <p><b>경합 안전(fail-close):</b> 키는 {@code knownEpochs}를 다시 읽지 않고 <b>이 결정의 {@code value.epoch()}</b>로
+     * 만든다. 위험 전이 순간 같은 주체·요청에 두 평가가 동시에 진행 중일 때, 뒤늦게 도착한 옛 epoch의 stale ALLOW가
+     * 더 큰 epoch로 키잉돼 신선한 DENY를 덮어쓰는 것을 막는다 — 옛 결정은 옛 세대 키에 고립돼 조회되지 않는다.
      */
     void put(DecisionRequest request, DecisionResponse value) {
         if (!enabled) {
             return;
         }
         learnEpoch(request.subject(), value.epoch());
-        Key key = cacheKey(request);
+        Key key = cacheKey(request, value.epoch());
         if (store.size() >= maxSize && !store.containsKey(key)) {
             return;
         }
@@ -137,12 +141,14 @@ class DecisionCache {
 
     /**
      * 캐시 키를 만든다 — 요청에서 <b>휘발성 레이트 신호</b>({@link RiskSignals#CTX_REQUESTS_IN_WINDOW})를
-     * 걷어낸 정규화 요청에, 그 주체의 <b>현재 epoch</b>를 끼운다. 레이트를 빼는 이유는 매 요청 달라져 키에 넣으면
+     * 걷어낸 정규화 요청에, 주어진 <b>epoch</b>를 끼운다. 레이트를 빼는 이유는 매 요청 달라져 키에 넣으면
      * 캐시가 무력화되기 때문이다(결정 #3). 나머지 맥락(source-ip·hour-of-day)은 그대로 둬 새 IP/시간대가 정상적으로
      * 다른 키가 되게 한다. epoch를 끼우는 이유는 위험 변화 시 옛 엔트리를 한 번에 키-아웃하기 위함이다(결정 #1).
+     *
+     * <p>epoch를 인자로 받는 이유: 조회는 주체의 <b>현재</b> 세대({@code knownEpochs})로, 적재는 <b>그 결정의</b>
+     * 세대로 키잉해야 경합 시 stale 결정이 신선한 결정을 덮지 않는다({@link #put} 경합 안전 참고).
      */
-    private Key cacheKey(DecisionRequest request) {
-        long epoch = knownEpochs.getOrDefault(request.subject(), 0L);
+    private Key cacheKey(DecisionRequest request, long epoch) {
         Map<String, String> context = request.context();
         if (context == null || !context.containsKey(RiskSignals.CTX_REQUESTS_IN_WINDOW)) {
             return new Key(request, epoch);
