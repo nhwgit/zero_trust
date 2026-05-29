@@ -2,23 +2,32 @@ package com.ztg.pip;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 import com.ztg.common.PipAssessment;
 import com.ztg.common.RiskSignals;
 
 /**
- * PIP 평가 오케스트레이션 L2 — 점수 산출 + epoch 발급을 한 흐름으로 검증한다.
+ * PIP 평가 오케스트레이션 L2 — 점수 산출 + epoch 발급 + fan-out 전파를 한 흐름으로 검증한다.
  * 핵심 시나리오: 같은 주체가 정상(저위험)에서 새 IP+폭주로 바뀌면 점수가 임계 위로 오르고
  * <b>epoch가 bump</b>된다 → 이것이 게이트웨이의 능동 캐시 무효화(재로그인 없는 ALLOW→DENY)를 떠받친다.
+ * epoch가 오른 그 순간에만 fan-out publish가 일어나는지(다중 GW 즉시 전파)도 함께 본다.
  */
 class AssessmentServiceTest {
+
+    /** 발신점 호출을 포착하는 가짜 publisher — fan-out이 epoch 상승 때만(중복 없이) 일어나는지 검증한다. */
+    private record Published(String subject, long epoch) {}
+    private final List<Published> published = new ArrayList<>();
+    private final EpochPublisher capturing = (subject, epoch) -> published.add(new Published(subject, epoch));
 
     /** RiskEngine은 @Value 기본값을 코드로 재현(미신뢰40/IP변화30/폭주40/업무외15, 폭주임계60, 업무 9-18). */
     private final RiskEngine riskEngine = new RiskEngine(40, 30, 40, 15, 60, 9, 18);
     private final SubjectRiskState state = new SubjectRiskState();
     private final AssessmentService service =
-            new AssessmentService(new SubjectAttributeStore(), riskEngine, state);
+            new AssessmentService(new SubjectAttributeStore(), riskEngine, state, capturing);
 
     @Test
     void normal_then_new_ip_and_burst_raises_score_and_bumps_epoch() {
@@ -34,6 +43,9 @@ class AssessmentServiceTest {
         assertThat(second.epoch()).isEqualTo(1L);
         // 설명 가능: 거부 사유에 실릴 기여 신호 내역이 두 신호를 모두 담는다.
         assertThat(second.risk().explain()).contains("ip-change").contains("rate-burst");
+
+        // fan-out은 epoch가 오른 그 한 번만 일어난다(첫 관측은 기준 설정이라 전파 없음).
+        assertThat(published).containsExactly(new Published("alice", 1L));
     }
 
     @Test
@@ -42,6 +54,8 @@ class AssessmentServiceTest {
         PipAssessment again = service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
         assertThat(again.risk().score()).isEqualTo(10);
         assertThat(again.epoch()).isZero();   // 점수 동일 → 캐시 유지(불필요한 무효화 없음)
+        // 점수 불변이면 fan-out도 침묵한다(채널 잡음 없음 = 불필요한 무효화 없음).
+        assertThat(published).isEmpty();
     }
 
     @Test

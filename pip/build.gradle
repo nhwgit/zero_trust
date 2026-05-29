@@ -7,6 +7,9 @@ plugins {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation project(':common')   // SubjectAttributes 등 공유 DTO
+    // 다중 GW 능동 무효화 fan-out 발신(Redis pub/sub). ztg.fanout.enabled=true일 때만 Redis 발신점 활성 —
+    // 끄면(기본) StringRedisTemplate을 주입받지 않는 no-op만 활성이라 Redis 없이도 기동/테스트 green.
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     // 관측: actuator로 /actuator/prometheus 노출, micrometer로 기본 지표 수집
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'

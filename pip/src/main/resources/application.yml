@@ -4,6 +4,22 @@ server:
 spring:
   application:
     name: pip
+  # fan-out을 켤 때만 쓰는 Redis 연결(off면 미사용 — no-op 발신점만 활성).
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # publish는 위험 평가(assess) 경로에서 동기로 일어난다. Lettuce 기본 커맨드 타임아웃(~60s)이면 Redis가
+      # 행(hang)일 때 평가가 그만큼 블록된다 — fail-open 의도와 어긋난다. 짧게 잡아 bump 경로 꼬리 지연을 바운드:
+      # 타임아웃 시 예외 → publisher가 삼키고 진행하며, 무효화는 게이트웨이 TTL·lazy 학습 백스톱이 책임진다.
+      timeout: ${REDIS_TIMEOUT:200ms}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:200ms}
+
+ztg:
+  # 다중 GW 능동 무효화 fan-out(Redis pub/sub) 발신. 기본 off — 켜면 epoch 상승을 모든 GW에 즉시 전파한다.
+  # off면 Redis에 연결하지 않는다(단일 PIP/테스트 무영향).
+  fanout:
+    enabled: ${FANOUT_ENABLED:false}
 
 # 분산 추적(Phase 4 Step 3): 모든 로그 라인에 요청 추적 ID([requestId])를 찍는다.
 # RequestIdFilter가 PDP에서 전파된 X-Request-Id를 MDC에 채운다.
