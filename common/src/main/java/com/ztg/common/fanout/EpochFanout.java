@@ -1,4 +1,4 @@
-package com.ztg.common;
+package com.ztg.common.fanout;
 
 /**
  * 다중 게이트웨이 <b>능동 무효화 fan-out</b>의 와이어 규약 — 채널명 + 메시지 코덱.

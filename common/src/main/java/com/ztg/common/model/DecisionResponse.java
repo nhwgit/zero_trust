@@ -1,4 +1,4 @@
-package com.ztg.common;
+package com.ztg.common.model;
 
 import java.util.List;
 

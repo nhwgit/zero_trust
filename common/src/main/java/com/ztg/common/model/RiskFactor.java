@@ -1,4 +1,4 @@
-package com.ztg.common;
+package com.ztg.common.model;
 
 /**
  * 위험 점수에 기여한 단일 신호. 점수를 "설명 가능"하게 만드는 단위다.

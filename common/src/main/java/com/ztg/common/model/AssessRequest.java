@@ -1,4 +1,4 @@
-package com.ztg.common;
+package com.ztg.common.model;
 
 /**
  * PDP → PIP 위험 평가 요청. "이 주체를, 이 휘발성 신호 맥락에서 평가하라."

@@ -1,4 +1,4 @@
-package com.ztg.common;
+package com.ztg.common.model;
 
 /**
  * PIP → PDP가 제공하는 주체의 맥락/속성. ABAC 정책 평가에 쓰인다.

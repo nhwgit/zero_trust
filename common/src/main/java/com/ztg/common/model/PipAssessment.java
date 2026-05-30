@@ -1,4 +1,4 @@
-package com.ztg.common;
+package com.ztg.common.model;
 
 /**
  * PIP → PDP 평가 응답 — 한 번의 {@code POST /pip/assess}로 PDP가 판단에 필요한 모든 맥락을 받는다.
