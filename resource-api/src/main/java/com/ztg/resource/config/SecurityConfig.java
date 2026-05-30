@@ -1,5 +1,6 @@
-package com.ztg.resource;
+package com.ztg.resource.config;
 
+import com.ztg.resource.filter.GatewayTrustFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;

@@ -1,4 +1,4 @@
-package com.ztg.resource;
+package com.ztg.resource.web;
 
 import java.time.Instant;
 import java.util.Map;

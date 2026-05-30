@@ -1,4 +1,4 @@
-package com.ztg.resource;
+package com.ztg.resource.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

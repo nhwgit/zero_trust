@@ -1,4 +1,4 @@
-package com.ztg.resource;
+package com.ztg.resource.filter;
 
 import java.io.IOException;
 import java.security.MessageDigest;
@@ -22,7 +22,7 @@ import jakarta.servlet.http.HttpServletResponse;
  * <p>설계 메모:
  * <ul>
  *   <li><b>defense-in-depth</b>: 이 필터는 JWT 검증을 대체하지 않는다. resource-api는
- *       여전히 토큰을 스스로 검증하고({@link SecurityConfig}), 그 <i>앞단</i>에서 "PEP를
+ *       여전히 토큰을 스스로 검증하고({@link com.ztg.resource.config.SecurityConfig}), 그 <i>앞단</i>에서 "PEP를
  *       거쳤는가"를 추가로 확인한다. 두 관문을 모두 통과해야 한다.</li>
  *   <li><b>정적 공유 비밀의 한계</b>: 비밀을 아는 주체만 헤더를 위조할 수 있다는 전제다.
  *       데모용 단순화이며, Phase 6에서 mTLS(상호 TLS)로 출처를 암호학적으로 증명해 대체한다.</li>
@@ -32,11 +32,11 @@ import jakarta.servlet.http.HttpServletResponse;
  */
 public class GatewayTrustFilter extends OncePerRequestFilter {
 
-    static final String TRUST_HEADER = "X-Gateway-Auth";
+    public static final String TRUST_HEADER = "X-Gateway-Auth";
 
     private final byte[] expectedSecret;
 
-    GatewayTrustFilter(String trustSecret) {
+    public GatewayTrustFilter(String trustSecret) {
         this.expectedSecret = trustSecret == null ? new byte[0]
                 : trustSecret.getBytes(StandardCharsets.UTF_8);
     }

@@ -1,5 +1,7 @@
-package com.ztg.resource;
+package com.ztg.resource.web;
 
+import com.ztg.resource.config.SecurityConfig;
+import com.ztg.resource.filter.GatewayTrustFilter;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;

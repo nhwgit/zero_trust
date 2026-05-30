@@ -1,4 +1,4 @@
-package com.ztg.resource;
+package com.ztg.resource.config;
 
 import java.util.Collection;
 import java.util.List;
