@@ -1,5 +1,6 @@
-package com.ztg.pdp;
+package com.ztg.pdp.policy;
 
+import com.ztg.pdp.client.PipClient;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -14,13 +15,13 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import com.ztg.common.Decision;
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
-import com.ztg.common.PipAssessment;
-import com.ztg.common.RiskAssessment;
-import com.ztg.common.RiskSignals;
-import com.ztg.common.SubjectAttributes;
+import com.ztg.common.model.Decision;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
+import com.ztg.common.model.PipAssessment;
+import com.ztg.common.model.RiskAssessment;
+import com.ztg.common.model.RiskSignals;
+import com.ztg.common.model.SubjectAttributes;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 

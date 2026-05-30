@@ -1,4 +1,4 @@
-package com.ztg.pdp;
+package com.ztg.pdp.config;
 
 import javax.net.ssl.SSLContext;
 

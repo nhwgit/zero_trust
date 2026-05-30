@@ -1,11 +1,12 @@
-package com.ztg.pdp;
+package com.ztg.pdp.web;
 
+import com.ztg.pdp.policy.PolicyDecisionService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
 
 /**
  * PDP의 HTTP 표면. PEP(Gateway)가 매 요청마다 판단을 질의한다.

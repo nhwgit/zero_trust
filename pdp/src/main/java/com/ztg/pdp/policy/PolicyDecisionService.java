@@ -1,16 +1,17 @@
-package com.ztg.pdp;
+package com.ztg.pdp.policy;
 
+import com.ztg.pdp.client.PipClient;
 import io.micrometer.core.instrument.MeterRegistry;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import com.ztg.common.Decision;
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
-import com.ztg.common.PipAssessment;
-import com.ztg.common.RiskSignals;
+import com.ztg.common.model.Decision;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
+import com.ztg.common.model.PipAssessment;
+import com.ztg.common.model.RiskSignals;
 
 /**
  * 판단 오케스트레이션 — PIP에서 맥락(속성+동적 위험점수+epoch)을 모아 {@link PolicyEngine}으로 평가한다.

@@ -1,4 +1,4 @@
-package com.ztg.pdp;
+package com.ztg.pdp.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -10,12 +10,12 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import com.ztg.common.Decision;
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
-import com.ztg.common.RiskAssessment;
-import com.ztg.common.RiskFactor;
-import com.ztg.common.SubjectAttributes;
+import com.ztg.common.model.Decision;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
+import com.ztg.common.model.RiskAssessment;
+import com.ztg.common.model.RiskFactor;
+import com.ztg.common.model.SubjectAttributes;
 
 /**
  * 정책 엔진 단위 검증 — 완료 기준("조건을 바꾸면 동일 주체의 결과가 ALLOW↔DENY로 바뀐다")을

@@ -1,4 +1,4 @@
-package com.ztg.pdp;
+package com.ztg.pdp.policy;
 
 import java.time.Clock;
 import java.time.LocalTime;
@@ -8,10 +8,10 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
-import com.ztg.common.RiskAssessment;
-import com.ztg.common.SubjectAttributes;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
+import com.ztg.common.model.RiskAssessment;
+import com.ztg.common.model.SubjectAttributes;
 
 /**
  * ABAC 정책 엔진 — 요청 + 주체 속성 + <b>동적 위험 평가</b> + 시각을 받아 ALLOW/DENY를 판단한다.
