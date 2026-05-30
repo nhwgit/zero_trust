@@ -1,5 +1,6 @@
-package com.ztg.pip;
+package com.ztg.pip.web;
 
+import com.ztg.pip.store.SubjectAttributeStore;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -7,7 +8,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.ztg.common.SubjectAttributes;
+import com.ztg.common.model.SubjectAttributes;
 
 /**
  * PIP의 HTTP 표면. PDP가 판단 시 주체 속성을 조회한다.

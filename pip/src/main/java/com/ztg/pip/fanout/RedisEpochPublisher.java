@@ -1,10 +1,10 @@
-package com.ztg.pip;
+package com.ztg.pip.fanout;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-import com.ztg.common.EpochFanout;
+import com.ztg.common.fanout.EpochFanout;
 
 /**
  * {@link EpochPublisher}의 Redis pub/sub 구현 — epoch 상승을 {@link EpochFanout#CHANNEL} 채널로 publish해
@@ -19,13 +19,13 @@ import com.ztg.common.EpochFanout;
  * 최악의 블록을 bump 경로 한정 200ms로 바운드한다 — 타임아웃은 여기서 예외로 떨어져 아래 catch가 삼킨다.
  * (bump 자체가 드물어 — 점수 전이 때만 — 정상 경로엔 영향이 없다.)
  */
-class RedisEpochPublisher implements EpochPublisher {
+public class RedisEpochPublisher implements EpochPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(RedisEpochPublisher.class);
 
     private final StringRedisTemplate redis;
 
-    RedisEpochPublisher(StringRedisTemplate redis) {
+    public RedisEpochPublisher(StringRedisTemplate redis) {
         this.redis = redis;
     }
 

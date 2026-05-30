@@ -1,11 +1,11 @@
-package com.ztg.pip;
+package com.ztg.pip.store;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.stereotype.Component;
 
-import com.ztg.common.SubjectAttributes;
+import com.ztg.common.model.SubjectAttributes;
 
 /**
  * 주체 속성의 in-memory 저장소. 초기엔 메모리, 후반(roadmap)에는 Redis/PostgreSQL로 교체.

@@ -1,5 +1,8 @@
-package com.ztg.pip;
+package com.ztg.pip.service;
 
+import com.ztg.pip.fanout.EpochPublisher;
+import com.ztg.pip.store.SubjectAttributeStore;
+import com.ztg.pip.store.SubjectRiskState;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.ArrayList;
@@ -7,8 +10,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import com.ztg.common.PipAssessment;
-import com.ztg.common.RiskSignals;
+import com.ztg.common.model.PipAssessment;
+import com.ztg.common.model.RiskSignals;
 
 /**
  * PIP 평가 오케스트레이션 L2 — 점수 산출 + epoch 발급 + fan-out 전파를 한 흐름으로 검증한다.

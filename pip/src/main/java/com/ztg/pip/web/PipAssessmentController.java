@@ -1,11 +1,12 @@
-package com.ztg.pip;
+package com.ztg.pip.web;
 
+import com.ztg.pip.service.AssessmentService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.ztg.common.AssessRequest;
-import com.ztg.common.PipAssessment;
+import com.ztg.common.model.AssessRequest;
+import com.ztg.common.model.PipAssessment;
 
 /**
  * PIP의 위험 평가 표면. PDP가 판단 직전 호출한다.

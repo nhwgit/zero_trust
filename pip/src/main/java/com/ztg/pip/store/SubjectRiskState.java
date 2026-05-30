@@ -1,4 +1,4 @@
-package com.ztg.pip;
+package com.ztg.pip.store;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;

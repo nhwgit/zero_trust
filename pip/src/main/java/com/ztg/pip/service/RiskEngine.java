@@ -1,4 +1,4 @@
-package com.ztg.pip;
+package com.ztg.pip.service;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -6,17 +6,17 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import com.ztg.common.RiskAssessment;
-import com.ztg.common.RiskFactor;
-import com.ztg.common.RiskSignals;
-import com.ztg.common.SubjectAttributes;
+import com.ztg.common.model.RiskAssessment;
+import com.ztg.common.model.RiskFactor;
+import com.ztg.common.model.RiskSignals;
+import com.ztg.common.model.SubjectAttributes;
 
 /**
  * 동적 위험 점수 산출기 — 저장 속성(baseline·디바이스) + 휘발성 신호(IP 변화·레이트·시각)를
  * <b>설명 가능한 가중합</b>으로 0~100 점수로 환산한다.
  *
  * <p>순수 함수에 가깝다: 입력(속성·신호·직전 IP)만으로 점수가 결정된다. 상태(직전 IP)는
- * {@link SubjectRiskState}가 따로 보관하고, 여기엔 비교 결과만 전달된다 → L2 단위테스트가 쉽다.
+ * {@link com.ztg.pip.store.SubjectRiskState}가 따로 보관하고, 여기엔 비교 결과만 전달된다 → L2 단위테스트가 쉽다.
  *
  * <p>가중치·임계는 모두 설정으로 뺀다(PolicyEngine과 같은 철학): 데모에서 코드 수정 없이
  * "조건을 바꾸면 ALLOW↔DENY가 뒤집힌다"를 보이기 위함. 점수는 {@link RiskAssessment}에서 0~100 clamp.

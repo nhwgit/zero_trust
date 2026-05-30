@@ -1,5 +1,7 @@
-package com.ztg.pip;
+package com.ztg.pip.config;
 
+import com.ztg.pip.fanout.EpochPublisher;
+import com.ztg.pip.fanout.RedisEpochPublisher;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;

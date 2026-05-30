@@ -1,10 +1,10 @@
-package com.ztg.pip;
+package com.ztg.pip.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
 
-import com.ztg.common.SubjectAttributes;
+import com.ztg.common.model.SubjectAttributes;
 
 /** 속성 저장소 검증 — 시드/변경/미등록 기본값(보수적) 동작. */
 class SubjectAttributeStoreTest {

@@ -1,13 +1,13 @@
-package com.ztg.pip;
+package com.ztg.pip.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
 
-import com.ztg.common.RiskAssessment;
-import com.ztg.common.RiskFactor;
-import com.ztg.common.RiskSignals;
-import com.ztg.common.SubjectAttributes;
+import com.ztg.common.model.RiskAssessment;
+import com.ztg.common.model.RiskFactor;
+import com.ztg.common.model.RiskSignals;
+import com.ztg.common.model.SubjectAttributes;
 
 /**
  * 위험 산출 단위 검증(L2) — 신호 조합별 점수·기여 팩터·밴드(임계 80 기준 ALLOW/DENY)를 확인한다.

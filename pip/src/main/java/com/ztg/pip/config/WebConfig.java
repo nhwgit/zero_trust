@@ -1,4 +1,4 @@
-package com.ztg.pip;
+package com.ztg.pip.config;
 
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;

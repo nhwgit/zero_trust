@@ -1,11 +1,14 @@
-package com.ztg.pip;
+package com.ztg.pip.service;
 
+import com.ztg.pip.fanout.EpochPublisher;
+import com.ztg.pip.store.SubjectAttributeStore;
+import com.ztg.pip.store.SubjectRiskState;
 import org.springframework.stereotype.Service;
 
-import com.ztg.common.PipAssessment;
-import com.ztg.common.RiskAssessment;
-import com.ztg.common.RiskSignals;
-import com.ztg.common.SubjectAttributes;
+import com.ztg.common.model.PipAssessment;
+import com.ztg.common.model.RiskAssessment;
+import com.ztg.common.model.RiskSignals;
+import com.ztg.common.model.SubjectAttributes;
 
 /**
  * PIP의 위험 평가 오케스트레이션 — 저장 속성 + 휘발성 신호 + 직전 IP를 모아 {@link RiskEngine}으로

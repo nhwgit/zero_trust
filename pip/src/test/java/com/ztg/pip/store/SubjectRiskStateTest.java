@@ -1,4 +1,4 @@
-package com.ztg.pip;
+package com.ztg.pip.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
