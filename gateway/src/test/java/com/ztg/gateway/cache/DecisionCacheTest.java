@@ -1,4 +1,4 @@
-package com.ztg.gateway;
+package com.ztg.gateway.cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -12,10 +12,10 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import org.junit.jupiter.api.Test;
 
-import com.ztg.common.Decision;
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
-import com.ztg.common.RiskSignals;
+import com.ztg.common.model.Decision;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
+import com.ztg.common.model.RiskSignals;
 
 /**
  * {@link DecisionCache} 단위 테스트 — 값 동등성 키, 휘발성 레이트 제외, source-ip 분기, enabled 토글에 더해

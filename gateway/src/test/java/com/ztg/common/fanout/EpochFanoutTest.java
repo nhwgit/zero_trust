@@ -1,4 +1,4 @@
-package com.ztg.common;
+package com.ztg.common.fanout;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

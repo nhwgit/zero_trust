@@ -1,5 +1,6 @@
-package com.ztg.gateway;
+package com.ztg.gateway.client;
 
+import com.ztg.gateway.cache.DecisionCache;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.web.reactive.function.client.WebClientSsl;
@@ -7,8 +8,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
 import com.ztg.common.web.RequestId;
 
 import reactor.core.publisher.Mono;
@@ -18,7 +19,7 @@ import reactor.core.publisher.Mono;
  *
  * <p>게이트웨이는 WebFlux 기반이므로 블로킹 호출을 섞지 않도록 논블로킹 {@link WebClient}로
  * PDP를 호출한다. 오류(PDP 다운 등)는 여기서 삼키지 않고 그대로 흘려보낸다 —
- * fail-close(판단 불가 → 차단)는 호출부({@link JwtAuthGlobalFilter})가 책임진다.
+ * fail-close(판단 불가 → 차단)는 호출부({@link com.ztg.gateway.filter.JwtAuthGlobalFilter})가 책임진다.
  *
  * <p><b>mTLS:</b> {@code ztg.gateway.pdp-ssl-bundle}이 설정되면(= mtls 프로파일) 해당 SSL 번들로
  * Netty 클라를 구성해 자기 인증서를 제시하고 PDP를 CA로 검증한다(상호 TLS). 비어 있으면(기본/테스트)

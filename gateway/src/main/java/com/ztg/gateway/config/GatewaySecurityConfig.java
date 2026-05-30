@@ -1,4 +1,4 @@
-package com.ztg.gateway;
+package com.ztg.gateway.config;
 
 import java.time.Clock;
 
@@ -18,7 +18,7 @@ import org.springframework.util.StringUtils;
  * 게이트웨이 보안 구성.
  *
  * <p>설계 메모: 토큰 검증(enforce)은 Spring Security의 자동 리소스서버 체인이 아니라
- * 커스텀 {@link JwtAuthGlobalFilter}가 단독으로 수행한다(PEP를 한 곳에 모으기 위함).
+ * 커스텀 {@link com.ztg.gateway.filter.JwtAuthGlobalFilter}가 단독으로 수행한다(PEP를 한 곳에 모으기 위함).
  * 그래서 Security 자동설정의 기본 체인은 <b>permitAll</b>로 비활성화해 길을 비켜준다.
  * 단, JWKS 기반 서명/iss/exp 검증을 손수 짜지 않으려고 {@link ReactiveJwtDecoder}만 빌려 쓴다.
  */
@@ -47,7 +47,7 @@ public class GatewaySecurityConfig {
     }
 
     /**
-     * 자동 보안체인을 무력화한다. 게이트웨이의 인증/인가는 {@link JwtAuthGlobalFilter}가 맡으므로
+     * 자동 보안체인을 무력화한다. 게이트웨이의 인증/인가는 {@link com.ztg.gateway.filter.JwtAuthGlobalFilter}가 맡으므로
      * 여기서는 모든 교환을 허용하고(httpBasic/formLogin 제거), CSRF도 끈다(순수 토큰 트래픽).
      */
     /**

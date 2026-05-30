@@ -1,4 +1,4 @@
-package com.ztg.gateway;
+package com.ztg.gateway.risk;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

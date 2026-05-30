@@ -1,11 +1,12 @@
-package com.ztg.gateway;
+package com.ztg.gateway.fanout;
 
+import com.ztg.gateway.cache.DecisionCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 
-import com.ztg.common.EpochFanout;
+import com.ztg.common.fanout.EpochFanout;
 
 import java.nio.charset.StandardCharsets;
 
@@ -18,13 +19,13 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>한 건의 파싱 실패가 구독을 끊지 않도록 {@link EpochFanout#decode} 예외는 잡아 그 메시지만 버린다.
  */
-class EpochFanoutSubscriber implements MessageListener {
+public class EpochFanoutSubscriber implements MessageListener {
 
     private static final Logger log = LoggerFactory.getLogger(EpochFanoutSubscriber.class);
 
     private final DecisionCache decisionCache;
 
-    EpochFanoutSubscriber(DecisionCache decisionCache) {
+    public EpochFanoutSubscriber(DecisionCache decisionCache) {
         this.decisionCache = decisionCache;
     }
 

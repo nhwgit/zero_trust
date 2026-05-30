@@ -1,5 +1,7 @@
-package com.ztg.gateway;
+package com.ztg.gateway.config;
 
+import com.ztg.gateway.cache.DecisionCache;
+import com.ztg.gateway.fanout.EpochFanoutSubscriber;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -7,7 +9,7 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
-import com.ztg.common.EpochFanout;
+import com.ztg.common.fanout.EpochFanout;
 
 /**
  * 능동 무효화 fan-out(수신측) 빈 구성. {@code ztg.fanout.enabled=true}일 때만 Redis 구독 컨테이너를 띄운다.

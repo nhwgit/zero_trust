@@ -1,4 +1,4 @@
-package com.ztg.gateway;
+package com.ztg.gateway.risk;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -24,7 +24,7 @@ import org.springframework.stereotype.Component;
  * 동기화한다(주체 단위 락 → 경합 국소화). 시간은 단조 증가하는 {@code nanoTime} 소스를 쓴다(벽시계 점프 무관).
  */
 @Component
-class SubjectRateObserver {
+public class SubjectRateObserver {
 
     /** 주체 → 최근 요청 타임스탬프(nanos) 큐. */
     private final ConcurrentHashMap<String, Deque<Long>> windows = new ConcurrentHashMap<>();
@@ -32,7 +32,7 @@ class SubjectRateObserver {
     /** 단조 시계 소스(테스트에서 주입 가능). 기본은 {@link System#nanoTime()}. */
     private final LongSupplier nanoClock;
 
-    SubjectRateObserver(@Value("${ztg.gateway.rate.window:10s}") Duration window) {
+    public SubjectRateObserver(@Value("${ztg.gateway.rate.window:10s}") Duration window) {
         this(window, System::nanoTime);
     }
 
@@ -46,7 +46,7 @@ class SubjectRateObserver {
      * 이 주체의 이번 요청을 기록하고, 윈도우 안에 남은 요청 수(이번 것 포함)를 돌려준다.
      * 윈도우보다 오래된 타임스탬프는 이 호출에서 걷어낸다(lazy eviction — 별도 청소 스레드 불필요).
      */
-    int record(String subject) {
+    public int record(String subject) {
         long now = nanoClock.getAsLong();
         long cutoff = now - windowNanos;
         Deque<Long> q = windows.computeIfAbsent(subject, k -> new ArrayDeque<>());

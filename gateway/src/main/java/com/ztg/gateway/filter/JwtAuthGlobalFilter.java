@@ -1,5 +1,7 @@
-package com.ztg.gateway;
+package com.ztg.gateway.filter;
 
+import com.ztg.gateway.client.PdpClient;
+import com.ztg.gateway.risk.SubjectRateObserver;
 import java.net.InetSocketAddress;
 import java.time.Clock;
 import java.time.LocalTime;
@@ -25,9 +27,9 @@ import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
-import com.ztg.common.RiskSignals;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
+import com.ztg.common.model.RiskSignals;
 import com.ztg.common.web.RequestId;
 
 import reactor.core.publisher.Mono;
@@ -53,9 +55,9 @@ import reactor.core.publisher.Mono;
 public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
     /** 게이트웨이 경유를 증명하는 내부 신뢰 헤더. resource-api가 동일 값을 검증한다. */
-    static final String TRUST_HEADER = "X-Gateway-Auth";
+    public static final String TRUST_HEADER = "X-Gateway-Auth";
     /** PDP가 DENY한 사유를 클라이언트에게 노출하는 헤더(감사/디버깅용). */
-    static final String DENY_REASON_HEADER = "X-Denied-Reason";
+    public static final String DENY_REASON_HEADER = "X-Denied-Reason";
     /** 요청 추적 ID 헤더 — 들어온 값이 있으면 잇고, 없으면 생성해 다운스트림으로 전파한다(공용 상수). */
     static final String REQUEST_ID_HEADER = RequestId.HEADER;
     private static final String BEARER_PREFIX = "Bearer ";
@@ -169,7 +171,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
      *   <li><b>source-ip</b>: 출발지 IP. 프록시가 있으면 {@code X-Forwarded-For} 첫 홉, 없으면 소켓 원격주소.
      *       PIP가 직전 관측과 비교해 IP 변화를 가중하고, 캐시 키에도 반영돼 <b>새 IP는 자동 미스</b>가 된다.</li>
      *   <li><b>requests-in-window</b>: 이 주체의 슬라이딩 윈도우 요청 수(레이트 급증 신호). 매 요청 달라지는
-     *       휘발성 값이라 캐시 키에선 제외한다({@link DecisionCache} 결정 #3) — 급증은 epoch 무효화(step 4)로 처리.</li>
+     *       휘발성 값이라 캐시 키에선 제외한다({@link com.ztg.gateway.cache.DecisionCache} 결정 #3) — 급증은 epoch 무효화(step 4)로 처리.</li>
      *   <li><b>hour-of-day</b>: 요청 시각의 시(업무시간 외 신호). 주입 시계로 산출해 테스트에서 고정 가능.</li>
      * </ul>
      *

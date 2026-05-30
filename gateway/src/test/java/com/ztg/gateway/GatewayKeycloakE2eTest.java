@@ -1,5 +1,6 @@
 package com.ztg.gateway;
 
+import com.ztg.gateway.filter.JwtAuthGlobalFilter;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;

@@ -1,4 +1,4 @@
-package com.ztg.gateway;
+package com.ztg.gateway.cache;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -12,9 +12,9 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
-import com.ztg.common.RiskSignals;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
+import com.ztg.common.model.RiskSignals;
 
 /**
  * PEP(Gateway)가 직전 인가 결정을 짧게 캐싱해, 같은 요청이 다시 오면 PDP 왕복을 건너뛰게 한다.
@@ -59,7 +59,7 @@ import com.ztg.common.RiskSignals;
  * {@code enabled=false}로 캐싱을 꺼 <b>같은 바이너리로 before(캐시 off)/after(캐시 on)</b> 부하를 비교할 수 있다.
  */
 @Component
-class DecisionCache {
+public class DecisionCache {
 
     /** 캐시 키: 정규화 요청(레이트 제외) + 그 주체의 현재 epoch. epoch가 다르면 다른 키 = 옛 결정 키-아웃. */
     private record Key(DecisionRequest request, long epoch) {}
@@ -115,7 +115,7 @@ class DecisionCache {
     }
 
     /** 살아 있는(미만료) 결정이 있으면 반환, 없으면 {@code null}. 캐시가 꺼져 있으면 항상 {@code null}(지표 미집계). */
-    DecisionResponse getIfPresent(DecisionRequest request) {
+    public DecisionResponse getIfPresent(DecisionRequest request) {
         if (!enabled) {
             return null;
         }
@@ -148,7 +148,7 @@ class DecisionCache {
      * 만든다. 위험 전이 순간 같은 주체·요청에 두 평가가 동시에 진행 중일 때, 뒤늦게 도착한 옛 epoch의 stale ALLOW가
      * 더 큰 epoch로 키잉돼 신선한 DENY를 덮어쓰는 것을 막는다 — 옛 결정은 옛 세대 키에 고립돼 조회되지 않는다.
      */
-    void put(DecisionRequest request, DecisionResponse value) {
+    public void put(DecisionRequest request, DecisionResponse value) {
         if (!enabled) {
             return;
         }
@@ -173,7 +173,7 @@ class DecisionCache {
      * <p>{@link #learnEpoch}와 같은 단조(max) 학습이라 옛/중복 메시지는 무시된다(부활 없음). 실제로
      * epoch가 전진했을 때만 지표를 올려, lazy 학습으로 이미 알던 값의 재수신과 구분한다.
      */
-    void applyRemoteEpoch(String subject, long epoch) {
+    public void applyRemoteEpoch(String subject, long epoch) {
         long prior = knownEpochs.getOrDefault(subject, 0L);
         learnEpoch(subject, epoch);
         if (epoch > prior) {

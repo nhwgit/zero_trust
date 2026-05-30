@@ -1,5 +1,7 @@
-package com.ztg.gateway;
+package com.ztg.gateway.filter;
 
+import com.ztg.gateway.client.PdpClient;
+import com.ztg.gateway.risk.SubjectRateObserver;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -24,8 +26,8 @@ import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.web.server.ServerWebExchange;
 
-import com.ztg.common.DecisionRequest;
-import com.ztg.common.DecisionResponse;
+import com.ztg.common.model.DecisionRequest;
+import com.ztg.common.model.DecisionResponse;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
@@ -276,9 +278,9 @@ class JwtAuthGlobalFilterTest {
 
         // 게이트웨이가 관측한 IP(XFF 첫 홉)·레이트·시각이 PDP 질의 context에 RiskSignals 키로 실린다.
         java.util.Map<String, String> ctx = sent.getValue().context();
-        assertThat(ctx.get(com.ztg.common.RiskSignals.CTX_SOURCE_IP)).isEqualTo("203.0.113.7");
-        assertThat(ctx.get(com.ztg.common.RiskSignals.CTX_REQUESTS_IN_WINDOW)).isEqualTo("1");
-        assertThat(ctx.get(com.ztg.common.RiskSignals.CTX_HOUR_OF_DAY)).isEqualTo("9");
+        assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP)).isEqualTo("203.0.113.7");
+        assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_REQUESTS_IN_WINDOW)).isEqualTo("1");
+        assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_HOUR_OF_DAY)).isEqualTo("9");
     }
 
     @Test
@@ -297,7 +299,7 @@ class JwtAuthGlobalFilterTest {
 
         // 같은 주체(alice)가 윈도우 안에서 거듭 호출하면 레이트가 1→2→3으로 누적된다.
         assertThat(sent.getAllValues()).extracting(
-                        r -> r.context().get(com.ztg.common.RiskSignals.CTX_REQUESTS_IN_WINDOW))
+                        r -> r.context().get(com.ztg.common.model.RiskSignals.CTX_REQUESTS_IN_WINDOW))
                 .containsExactly("1", "2", "3");
     }
 
