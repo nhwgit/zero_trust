@@ -9,6 +9,7 @@ import java.util.function.LongSupplier;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -84,6 +85,7 @@ public class DecisionCache {
     private final Counter bypasses;
     private final Counter fanoutApplied;
 
+    @Autowired
     DecisionCache(@Value("${ztg.gateway.decision-cache.enabled:true}") boolean enabled,
                   @Value("${ztg.gateway.decision-cache.ttl:5s}") Duration ttl,
                   @Value("${ztg.gateway.decision-cache.high-risk-ttl:1s}") Duration highRiskTtl,

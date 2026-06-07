@@ -6,6 +6,7 @@ import java.util.Deque;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -32,6 +33,7 @@ public class SubjectRateObserver {
     /** 단조 시계 소스(테스트에서 주입 가능). 기본은 {@link System#nanoTime()}. */
     private final LongSupplier nanoClock;
 
+    @Autowired
     public SubjectRateObserver(@Value("${ztg.gateway.rate.window:10s}") Duration window) {
         this(window, System::nanoTime);
     }
