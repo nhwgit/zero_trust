@@ -29,6 +29,11 @@ logging:
 
 # 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
 management:
+  health:
+    redis:
+      # fan-out용 Redis는 선택적 의존성(기본 off·best-effort 발신)이라, 부재가 /actuator/health를
+      # 통째로 DOWN시키면 안 된다(가용성 우선 설계와 일치). fanout을 켜면 별도로 모니터링한다.
+      enabled: false
   endpoints:
     web:
       exposure:
