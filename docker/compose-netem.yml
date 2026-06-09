@@ -1,0 +1,16 @@
+# D2 실습2(L4 netem) 측정용 override — 게이트웨이 결정 캐시를 끈다.
+#
+# 왜: DecisionCache가 켜져 있으면(기본값 true) 같은 /api/hello 반복 요청이 캐시히트로 처리돼
+#   gateway→pdp→pip 호출을 건너뛴다 → netem을 pip에 걸어도 8083에 트래픽이 안 흘러 L4 영향이 안 보인다.
+#   캐시를 끄면 매 요청이 전 체인을 타므로 pdp↔pip(8083) 링크에 재전송/RTT 점프가 관측된다.
+#
+# ⚠️ env를 셸(`$env:...`)에 설정하는 것으로는 안 된다 — 캐시를 읽는 건 k6가 아니라 게이트웨이 컨테이너다.
+#   compose 환경에 주입해 컨테이너를 재생성해야 한다.
+#
+# 사용: docker compose -f docker-compose.yml -f compose-apps.yml -f compose-netem.yml up -d gateway
+# 복귀: docker compose -f docker-compose.yml -f compose-apps.yml up -d gateway   (override 빼고 재생성 = 캐시 ON)
+
+services:
+  gateway:
+    environment:
+      DECISION_CACHE_ENABLED: "false"
