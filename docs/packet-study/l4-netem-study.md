@@ -4,7 +4,7 @@
 > 패킷+지표로 진단한 기록. "지연/손실이 났다"는 추측 대신 **재전송·RTT·p99로 원인을 짚는** 과정.
 > 다루는 것: tcpdump/Wireshark, **L4(TCP) 트러블슈팅**, `tc netem`, 재전송/흐름제어/RTT.
 >
-> 산출물: `netem-before.pcap`(정상)·`netem-after.pcap`(주입) · 재현/필터/검증맵 → [README.md](./README.md)
+> 산출물: `netem-before.pcap`(정상)·`netem-after.pcap`(주입). 재현·필터는 아래 §재현/필터/분석, 검증맵은 §2.
 
 ---
 
@@ -31,7 +31,7 @@ docker run --rm --net container:ztg-pip --cap-add NET_ADMIN nicolaka/netshoot \
 netns vantage**로 그대로 관측된다. netem은 root qdisc=eth0 **송신(egress)** 에 걸려 pip의 응답이 지연/유실된다.
 
 > 측정 함정: 게이트웨이 결정 캐시가 켜져 있으면 캐시히트가 pip 호출을 건너뛰어 L4 영향이 안 보인다 →
-> 측정 시 캐시 OFF로 매 요청이 전 체인을 타게 했다. (자세한 재현/필터는 [README.md](./README.md) "실습2".)
+> 측정 시 캐시 OFF로 매 요청이 전 체인을 타게 했다. (자세한 재현/필터는 아래 §재현/필터/분석.)
 
 ---
 
@@ -51,7 +51,7 @@ netns vantage**로 그대로 관측된다. netem은 root qdisc=eth0 **송신(egr
 
 ---
 
-## 3. ★ 가장 비자명한 한 컷 — 100ms가 한 방향에만 보인다
+## 3. 100ms가 한 방향에만 보인다
 
 netem `delay 100ms`는 **pip의 egress**에 걸려 있다. 캡처 지점은 pdp.
 
@@ -94,5 +94,22 @@ RTO 기반 재전송(`tcp.analysis.retransmission && !fast_retransmission`)을 �
 
 ## 재현 / 필터 / 분석
 
-→ [README.md](./README.md) "실습2 — L4 트러블슈팅" 절: 재현 cold-start(`netem-inject/clear.ps1`·`netem-capture.sh`·
-`compose-netem.yml`), Wireshark/tshark 필터(`tcp.analysis.retransmission`·`ack_rtt`·`lost_segment`), 검증 체크리스트.
+**재현 (cold start, 캐시 OFF 측정):** 게이트웨이를 결정 캐시 OFF로 재생성한 뒤 before/after를 각각 캡처+부하한다.
+
+- `docker/compose-netem.yml` — 게이트웨이 결정 캐시 OFF override(측정용). 캐시 ON이면 캐시히트가 pip 호출을 건너뛰어 L4 영향이 안 보인다.
+- `docker/netem-capture.sh <before|after> [캡처초] [요청수]` — pdp netns에 tcpdump 사이드카 + curl 부하를 한 WSL 세션에 묶어 오케스트레이션(pcap 저장·p50/p90/p99 출력).
+- `docker/netem-inject.ps1`(`-Show`로 드롭 통계)·`docker/netem-clear.ps1` — netem 주입/해제.
+
+**Wireshark/tshark 필터:**
+
+```text
+tcp.analysis.retransmission        손실 재전송(핵심 증거)
+tcp.analysis.fast_retransmission   중복 ACK 3개로 촉발된 빠른 재전송
+tcp.analysis.duplicate_ack         "빠진 세그먼트 있음" 신호
+tcp.analysis.lost_segment          다음 세그먼트가 먼저 도착해 드러난 '구멍'
+tcp.analysis.ack_rtt               ACK까지 걸린 시간(주입 후 ≈100ms 점프)
+tcp.port == 8083                   pdp↔pip(netem 건 링크) — 증상이 여기 몰린다
+tcp.port == 8084                   gw↔pdp(대조: 주입 안 한 링크)
+```
+
+**검증맵:** §2 표(before vs after, tshark 객관 사실).

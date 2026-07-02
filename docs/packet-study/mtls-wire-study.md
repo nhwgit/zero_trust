@@ -4,7 +4,7 @@
 > 통신(gateway→pdp→pip)이 정말 상호 인증되는지 검증한 실습 전체 기록.
 > 다루는 것: tcpdump/Wireshark, L2~L4 트러블슈팅, TLS/HTTPS·mTLS 핸드셰이크 분석.
 >
-> 산출물: `mtls-tls12.pcap`(핵심)·`mtls-tls13.pcap`(대조) · 재현/필터 레퍼런스 → [README.md](./README.md)
+> 산출물: `mtls-tls12.pcap`(핵심)·`mtls-tls13.pcap`(대조). 재현 절차는 §8, Wireshark/tshark 필터는 §4·§8 참조.
 
 ---
 
@@ -195,7 +195,7 @@ CertificateRequest·인증서가 다 나온다. 재개는 이미 인증된 세�
 .\docker\capture-mtls.ps1 -OutFile mtls-tls13.pcap   # 캡처 시작 → 사이드카 뜬 뒤
 .\docker\smoke-mtls.ps1                              #   다른 창에서 트리거
 # (B) TLS 1.2 강제 후 핵심 캡처
-wsl -d Ubuntu-24.04 -- bash -c "cd /mnt/c/Users/USER/Desktop/nhw/project/keycloak/docker && docker compose -f docker-compose.yml -f compose-apps.yml -f compose-tls12.yml up -d pdp pip"
+wsl -d Ubuntu-24.04 -- bash -c "cd <repo>/docker && docker compose -f docker-compose.yml -f compose-apps.yml -f compose-tls12.yml up -d pdp pip"
 .\docker\capture-mtls.ps1 -OutFile mtls-tls12.pcap   # 바인딩 확인 후 트리거
 .\docker\smoke-mtls.ps1
 .\docker\down-mtls-docker.ps1                         # 정리(Keycloak 유지)
@@ -217,4 +217,4 @@ tcp.stream == N                      한 연결만
 - `mtls-tls12.pcap` — mTLS 핸드셰이크 평문(type 11/13/15, 서버·클라 인증서)
 - `mtls-tls13.pcap` — 대조군(ServerHello 이후 암호화)
 - `docker/compose-tls12.yml` — TLS 1.2 강제(번들 옵션) override
-- [README.md](./README.md) — 재현·필터·검증맵 레퍼런스
+- `docker/up-mtls-docker.ps1`·`capture-mtls.ps1`·`smoke-mtls.ps1` — 재현(기동·캡처·트리거) 스크립트 (§8 절차)
