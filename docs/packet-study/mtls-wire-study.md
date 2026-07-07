@@ -4,8 +4,8 @@
 내부 통신(gateway→pdp→pip)이 정말 상호 인증되는지 확인한 기록이다. tcpdump/Wireshark
 사용법과 TLS/mTLS 핸드셰이크 분석을 다룬다.
 
-산출물은 `mtls-tls12.pcap`(핵심)과 `mtls-tls13.pcap`(대조)이다. 재현 절차는 §8, Wireshark/tshark
-필터는 §4와 §8에 있다.
+산출물은 [mtls-tls12.pcap](./mtls-tls12.pcap)(핵심)과 [mtls-tls13.pcap](./mtls-tls13.pcap)(대조)이다.
+재현 절차는 §7, Wireshark/tshark 필터는 §4와 §7에 있다.
 
 ---
 
@@ -70,6 +70,9 @@ CertificateRequest도 보이지 않았다. 원인은 TLS 1.3이었다.
 - 캡처의 ServerHello에서 `supported_version = 0x0304`(TLS 1.3)를 보고 진단했다. 레코드의
   Version 필드는 호환용 위장값 `0x0303`(1.2)을 쓰고, 진짜 버전은 `supported_versions`
   확장에서 협상된다.
+- ServerHello 직후 보이는 ChangeCipherSpec도 같은 미들박스 호환 위장이다. 1.3에서 CCS는
+  암호학적으로 아무 일도 하지 않는 더미로, 옛 장비가 1.2 세션으로 오인해 통과시키게 한다.
+  그래서 목록 열에는 "TLSv1.3", 레코드 안에는 "0x0303"이 동시에 보인다 — 모순이 아니다.
 
 그래서 mTLS 핸드셰이크를 평문으로 보려면 관측 구간을 TLS 1.2로 내려야 했다. 결과적으로
 두 캡처의 대비(1.3에서는 가려지고 1.2에서는 보인다)가 그대로 학습 포인트가 됐다.
@@ -165,9 +168,10 @@ frame 42  8084 → 50514   TLS Alert,  level=2(fatal),  desc=40(handshake_failur
 | 키소유 증명 | ServerKeyExchange(12) 서명 | CertificateVerify(15) 서명 |
 | 언제 | ServerHello 뒤 항상(단방향 TLS도) | CertificateRequest 응답으로만(mTLS) |
 
-둘 다 발급자는 `ztg-internal-ca`(공유 신뢰 앵커)다. 클라이언트 인증서가 추가되는 것이
-mTLS의 본질이고, 인증서(공개키) 제출과 서명(키소유 증명)이 한 쌍이라 인증서만 훔쳐서는
-통과하지 못한다.
+둘 다 발급자는 `ztg-internal-ca`(공유 신뢰 앵커)다. Certificate 메시지는 인증서 한 장이
+아니라 체인을 싣고, 각 인증서의 issuer를 다음 인증서의 subject에 이어 붙이면 신뢰 앵커까지
+닿는다. 클라이언트 인증서가 추가되는 것이 mTLS의 본질이고, 인증서(공개키) 제출과
+서명(키소유 증명)이 한 쌍이라 인증서만 훔쳐서는 통과하지 못한다.
 
 ---
 
@@ -188,38 +192,7 @@ mTLS의 본질이고, 인증서(공개키) 제출과 서명(키소유 증명)이
 
 ---
 
-## 7. 읽다가 막힌 것들 (Q&A)
-
-**Q1. 서버 응답 한 패킷에 ServerHello·Certificate·SKE·CertReq·SHD가 다 든 이유?**
-TLS 1.2 서버는 응답을 한 플라이트로 연달아 보낸다. TCP는 바이트 스트림이라 인증서가
-작으면 다섯 메시지가 한 TCP 세그먼트에 실린다. 체인이 컸다면 여러 세그먼트로 쪼개져
-Wireshark가 "TCP segment of a reassembled PDU"로 재조립해 마지막에 펼쳐 보여줬을 것이다.
-이 한 패킷이 "서버가 mTLS를 요구하는 순간" 전체라서 mTLS 확인의 핵심 증거가 된다.
-
-**Q2. 서버 Certificate에서 rdnSequence가 4개인 이유?**
-Certificate는 인증서 한 장이 아니라 체인(목록)을 싣는다(여기서는 2장: leaf=pdp,
-CA=ztg-internal-ca). X.509 본문에는 `Name` 필드가 둘 있는데(`issuer`와 `subject`) ASN.1상
-둘 다 `rdnSequence`다. 그래서 인증서 1장당 2개 × 2장 = 4개. (한 DN 안의 `2 items`는 또
-별개로, `O=ztg`와 `CN=...` 두 속성이다.) 각 인증서의 issuer를 다음 인증서의 subject에
-이어 붙이면 `leaf(pdp)→CA(ztg-internal-ca, self-signed)` 신뢰 체인이 된다.
-CertificateRequest 아래의 `Distinguished Name: CN=ztg-internal-ca`는 또 다른 것으로,
-서버가 수락하는 CA 목록이다.
-
-**Q3. (1.3) ServerHello 직후 Change Cipher Spec이 오고, Version이 `TLS 1.2(0x0303)`인 이유?**
-둘 다 1.3의 미들박스 호환 위장이다. CCS는 1.3에서 암호학적으로 아무 일도 하지 않는
-더미이고(옛 방화벽이 1.2 세션으로 오인해 통과시키게 한다), 레코드 Version도 일부러 옛 값
-0x0303을 쓰며 진짜 버전(0x0304)은 `supported_versions`에서 협상한다. 그래서 목록 열에는
-"TLSv1.3", 레코드 안에는 "0x0303"이 동시에 보인다 — 모순이 아니다.
-
-**Q4. `tls.handshake.type==13`이 stream 0·1에는 없고 2부터 잡히는 이유?**
-인증서 교환 여부는 연결 번호가 아니라 그 연결이 풀 핸드셰이크냐 재개냐에 달렸다.
-stream 0·1은 캡처 전 예열로 맺어둔 세션을 재개해(ServerHello 직후 NewSessionTicket,
-인증서 생략) 인증서가 없고, stream 2·3·5는 풀 핸드셰이크라 CertificateRequest와 인증서가
-다 나온다. 재개는 이미 인증된 세션의 재사용이라 인증서를 다시 보내지 않는다.
-
----
-
-## 8. 재현 (cold start)
+## 7. 재현 (cold start)
 
 ```powershell
 .\docker\up-mtls-docker.ps1                          # 스택 기동(기본 = TLS 1.3)
@@ -246,9 +219,9 @@ tcp.stream == N                      한 연결만
 
 ---
 
-## 9. 산출물
+## 8. 산출물
 
-- `mtls-tls12.pcap` — mTLS 핸드셰이크 평문(type 11/13/15, 서버·클라 인증서)
-- `mtls-tls13.pcap` — 대조군(ServerHello 이후 암호화)
+- [mtls-tls12.pcap](./mtls-tls12.pcap) — mTLS 핸드셰이크 평문(type 11/13/15, 서버·클라 인증서)
+- [mtls-tls13.pcap](./mtls-tls13.pcap) — 대조군(ServerHello 이후 암호화)
 - `docker/compose-tls12.yml` — TLS 1.2 강제(번들 옵션) override
-- `docker/up-mtls-docker.ps1`·`capture-mtls.ps1`·`smoke-mtls.ps1` — 재현(기동·캡처·트리거) 스크립트 (§8 절차)
+- `docker/up-mtls-docker.ps1`·`capture-mtls.ps1`·`smoke-mtls.ps1` — 재현(기동·캡처·트리거) 스크립트 (§7 절차)

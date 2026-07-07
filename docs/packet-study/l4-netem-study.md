@@ -1,12 +1,12 @@
 # L4 트러블슈팅을 와이어에서 — tc netem 장애주입·진단 기록
 
-실습1(mTLS 핸드셰이크 확인)에 이어, 정책 경로(pdp↔pip)에 L4 장애를 인위로 주입하고 그
+[실습1(mTLS 핸드셰이크 확인)](./mtls-wire-study.md)에 이어, 정책 경로(pdp↔pip)에 L4 장애를 인위로 주입하고 그
 증상을 패킷과 지표로 진단한 기록이다. "지연이나 손실이 있는 것 같다"는 추측 대신
 재전송·RTT·p99로 원인을 짚는 과정을 다룬다. 주제는 tcpdump/Wireshark, L4(TCP)
 트러블슈팅, `tc netem`, 재전송/흐름제어/RTT.
 
-산출물은 `netem-before.pcap`(정상)과 `netem-after.pcap`(주입)이다. 재현과 필터는 마지막
-절, 검증 맵은 §2에 있다.
+산출물은 [netem-before.pcap](./netem-before.pcap)(정상)과 [netem-after.pcap](./netem-after.pcap)(주입)이다.
+재현과 필터는 마지막 절, 검증 맵은 §2에 있다.
 
 ---
 
