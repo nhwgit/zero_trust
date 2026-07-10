@@ -139,7 +139,23 @@ ALLOW가 TTL 동안의 위험 상승을 무시하게 되어 지속검증과 정�
   (옛 결정은 옛 세대 키에 고립돼 더는 조회되지 않는다).
 
 이 세 장치 덕분에, 같은 토큰·같은 세션에서 새 IP나 폭주를 주입하면 재로그인 없이 다음
-호출이 ALLOW에서 DENY로 전이한다.
+호출이 ALLOW에서 DENY로 전이한다. 실제로는 이렇게 보인다 (`smoke-d1.ps1`의 한 장면,
+토큰은 처음 한 번만 발급):
+
+```text
+$ curl -H "Authorization: Bearer $TOKEN" -H "X-Forwarded-For: 203.0.113.10" :8080/api/hello
+HTTP/1.1 200        # baseline 10 + device-untrusted 40 = 50 < 임계 80 → ALLOW
+
+$ curl -H "Authorization: Bearer $TOKEN" -H "X-Forwarded-For: 198.51.100.66" :8080/api/hello
+HTTP/1.1 403        # 같은 토큰, 낯선 IP → ip-change +30 = 80 ≥ 80 → DENY
+X-Denied-Reason: risk score 80 >= threshold 80 [baseline(+10): stored baseline risk
+  for subject alice; device-untrusted(+40): access from an untrusted (unmanaged)
+  device; ip-change(+30): source ip changed 203.0.113.10 -> 198.51.100.66]
+```
+
+폭주 시나리오도 같은 구조다(rate-burst +40 → 90점 DENY). 위험이 가시면 — 레이트 윈도우가
+비면 — 다음 재평가에서 다시 200으로 복귀한다. 영구 차단이 아니라 위험에 적응하는
+가역적 결정이다.
 
 ### 4.4 다중 게이트웨이 fan-out (Redis pub/sub)
 
@@ -267,3 +283,19 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/hello
 - **조건의 설정화** — 위험 가중치·임계·업무시간을 전부 외부화해, 코드 수정 없이 결과를 뒤집어 보일 수 있다.
 - **설명 가능한 인가** — 모든 DENY는 "왜"(기여 신호·점수)를 응답과 로그에 남긴다.
 - **점수는 PIP, 임계는 PDP** — 정보 산출과 정책 적용의 책임을 분리한다.
+
+---
+
+## 9. 한계와 확장
+
+의도적으로 단순화한 부분과, 거기서 자연스럽게 이어지는 확장 지점이다.
+
+- **출발지 IP 신뢰** — `X-Forwarded-For` 첫 홉을 그대로 신뢰한다(§4.1의 한계 참조). 운영이라면
+  신뢰 프록시(로드밸런서)가 부여한 값만 수용하고 클라이언트 제공분은 제거해야 한다.
+- **PIP 저장소가 in-memory** — 재기동 시 속성·위험 신호가 소실되고 PIP 자체의 다중화가 없다.
+  속성·epoch를 외부 저장소로 빼고 PIP를 수평 확장하는 것이 다음 단계다.
+- **디바이스 신뢰가 정적 속성** — `device-untrusted`는 저장된 값일 뿐 실제 단말 상태(posture)
+  연동이 없다. MDM/EDR 신호를 PIP의 입력으로 잇는 것이 제로트러스트의 다음 조각이다.
+- **fail-close 열화 시나리오** — netem 지연·손실 주입에서는 TCP가 복구해 fail-close가 트리거되지
+  않았다. 타임아웃을 유발하는 더 가혹한 주입으로 "정책 경로 열화 → DENY 전이"까지 잡는 것이
+  확장 후보다 ([l4-netem-study.md §5](docs/packet-study/l4-netem-study.md)).
