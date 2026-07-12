@@ -21,7 +21,7 @@ class RiskEngineTest {
 
     /** 기본 가중치로 엔진 생성(설정 디폴트와 동일). */
     private RiskEngine engine() {
-        return new RiskEngine(40, 30, 40, 15, 60, 9, 18);
+        return new RiskEngine(40, 30, 40, 40, 15, 60, 9, 18);
     }
 
     /** finance/신뢰/baseline 지정 주체. */
@@ -116,6 +116,23 @@ class RiskEngineTest {
                 .extracting(RiskFactor::signal).doesNotContain("rate-burst");
         assertThat(engine().assess(alice(0), new RiskSignals("1.1.1.1", 61, 12), "1.1.1.1").factors())
                 .extracting(RiskFactor::signal).contains("rate-burst");
+    }
+
+    @Test
+    void l4_rate_flag_adds_kernel_weight() {
+        // 커널(XDP) L4 플래그(+40): 미신뢰 디바이스(+40) + baseline 10 = 90 → DENY.
+        // 토큰 없는 SYN 플러드는 L7 레이트(requestsInWindow)에 안 잡혀도 L4 축이 위험을 올린다.
+        RiskAssessment a = engine().assess(
+                new SubjectAttributes("alice", "finance", false, 10),
+                new RiskSignals("1.2.3.4", 5, 12),
+                "1.2.3.4",
+                new com.ztg.pip.store.L4RateFlagStore.Flag("1.2.3.4", 87, 5, Long.MAX_VALUE));
+
+        assertThat(a.score()).isEqualTo(90);
+        assertThat(a.factors()).extracting(RiskFactor::signal)
+                .containsExactlyInAnyOrder("baseline", "device-untrusted", "rate-l4");
+        assertThat(denied(a)).isTrue();
+        assertThat(a.explain()).contains("kernel(XDP)").contains("87 SYNs");
     }
 
     @Test

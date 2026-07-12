@@ -1,5 +1,6 @@
 package com.ztg.pip.store;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -68,6 +69,21 @@ public class SubjectRiskState {
             return new State(s.lastSeenIp(), s.epoch() + 1, score);      // 위험 변화: 능동 무효화 bump
         });
         return updated.epoch();
+    }
+
+    /**
+     * 직전 관측 IP가 {@code sourceIp}인 주체들을 찾는다 — 커널(XDP) L4 신호는 IP 단위로 도착하므로,
+     * 그 IP를 "지금 쓰고 있는" 주체로 번역해야 재평가(epoch bump → 능동 무효화)를 걸 수 있다(D3 Step 2).
+     * 전수 순회지만 주체 수는 세션 수 규모라 데모/단일 PIP에선 충분하다(역인덱스는 필요해질 때).
+     */
+    public List<String> subjectsByLastSeenIp(String sourceIp) {
+        if (sourceIp == null || sourceIp.isBlank()) {
+            return List.of();
+        }
+        return states.entrySet().stream()
+                .filter(e -> sourceIp.equals(e.getValue().lastSeenIp()))
+                .map(Map.Entry::getKey)
+                .toList();
     }
 
     /** 데모 리셋: 주체의 위험 상태를 비운다(다음 관측은 첫 관측으로 취급, epoch 0부터). */

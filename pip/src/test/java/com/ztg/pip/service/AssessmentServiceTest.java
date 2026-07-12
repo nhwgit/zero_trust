@@ -1,10 +1,15 @@
 package com.ztg.pip.service;
 
 import com.ztg.pip.fanout.EpochPublisher;
+import com.ztg.pip.store.L4RateFlagStore;
 import com.ztg.pip.store.SubjectAttributeStore;
 import com.ztg.pip.store.SubjectRiskState;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,11 +31,14 @@ class AssessmentServiceTest {
     private final List<Published> published = new ArrayList<>();
     private final EpochPublisher capturing = (subject, epoch) -> published.add(new Published(subject, epoch));
 
-    /** RiskEngine은 @Value 기본값을 코드로 재현(미신뢰40/IP변화30/폭주40/업무외15, 폭주임계60, 업무 9-18). */
-    private final RiskEngine riskEngine = new RiskEngine(40, 30, 40, 15, 60, 9, 18);
+    /** RiskEngine은 @Value 기본값을 코드로 재현(미신뢰40/IP변화30/폭주40/L4폭주40/업무외15, 폭주임계60, 업무 9-18). */
+    private final RiskEngine riskEngine = new RiskEngine(40, 30, 40, 40, 15, 60, 9, 18);
     private final SubjectRiskState state = new SubjectRiskState();
+    private final L4RateFlagStore l4Flags = new L4RateFlagStore(Duration.ofSeconds(30));
+    /** 12시(업무시간 내)로 고정 — out-of-band 재평가의 off-hours 가중을 배제해 산수를 예측 가능하게. */
+    private final Clock noon = Clock.fixed(Instant.parse("2026-07-11T12:00:00Z"), ZoneOffset.UTC);
     private final AssessmentService service =
-            new AssessmentService(new SubjectAttributeStore(), riskEngine, state, capturing);
+            new AssessmentService(new SubjectAttributeStore(), riskEngine, state, capturing, l4Flags, noon);
 
     @Test
     void normal_then_new_ip_and_burst_raises_score_and_bumps_epoch() {
@@ -59,6 +67,35 @@ class AssessmentServiceTest {
         assertThat(again.epoch()).isZero();   // 점수 동일 → 캐시 유지(불필요한 무효화 없음)
         // 점수 불변이면 fan-out도 침묵한다(채널 잡음 없음 = 불필요한 무효화 없음).
         assertThat(published).isEmpty();
+    }
+
+    @Test
+    void l4_rate_signal_reassesses_subjects_on_that_ip_and_bumps_epoch() {
+        // D3 Step 2 코어: 커널(XDP) 신호가 기존 능동 무효화 경로(점수 변화 → epoch bump → fan-out)를 탄다.
+        // 1) alice가 IP A에서 정상 관측(score 10, epoch 0) — lastSeenIp=A가 신호→주체 번역의 근거가 된다.
+        service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
+
+        // 2) 에이전트가 IP A의 L4 레이트 초과를 보고 → alice가 재평가되고(+rate-l4 40) epoch가 오른다.
+        List<String> affected = service.applyL4RateSignal("1.1.1.1", 87, 5);
+        assertThat(affected).containsExactly("alice");
+        assertThat(state.currentEpoch("alice")).isEqualTo(1L);
+        assertThat(published).containsExactly(new Published("alice", 1L));   // fan-out도 같은 순간 발화
+
+        // 3) 이후 실제 요청 평가에도 플래그가 살아 있는 동안 rate-l4가 가중된다(hold = 위험적응 유지 기간).
+        PipAssessment next = service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
+        assertThat(next.risk().score()).isEqualTo(50);   // baseline 10 + rate-l4 40
+        assertThat(next.risk().explain()).contains("rate-l4");
+    }
+
+    @Test
+    void l4_rate_signal_for_unseen_ip_touches_no_subject_but_holds_flag() {
+        // 신호 IP를 쓰는 주체가 없으면 재평가 대상 없음 — 다만 플래그는 남아, 그 IP로 처음 오는
+        // 평가부터 가중된다(신호가 로그인보다 먼저 도착하는 경합에도 안전).
+        assertThat(service.applyL4RateSignal("6.6.6.6", 99, 5)).isEmpty();
+        assertThat(published).isEmpty();
+
+        PipAssessment first = service.assess("alice", new RiskSignals("6.6.6.6", 0, 12));
+        assertThat(first.risk().explain()).contains("rate-l4");
     }
 
     @Test

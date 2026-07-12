@@ -10,6 +10,7 @@ import com.ztg.common.model.RiskAssessment;
 import com.ztg.common.model.RiskFactor;
 import com.ztg.common.model.RiskSignals;
 import com.ztg.common.model.SubjectAttributes;
+import com.ztg.pip.store.L4RateFlagStore;
 
 /**
  * 동적 위험 점수 산출기 — 저장 속성(baseline·디바이스) + 휘발성 신호(IP 변화·레이트·시각)를
@@ -27,6 +28,7 @@ public class RiskEngine {
     private final int deviceUntrustedWeight;
     private final int ipChangeWeight;
     private final int rateBurstWeight;
+    private final int rateL4Weight;
     private final int offHoursWeight;
     private final int burstThreshold;
     private final int businessHourStart;
@@ -36,6 +38,7 @@ public class RiskEngine {
             @Value("${ztg.pip.risk.device-untrusted-weight:40}") int deviceUntrustedWeight,
             @Value("${ztg.pip.risk.ip-change-weight:30}") int ipChangeWeight,
             @Value("${ztg.pip.risk.rate-burst-weight:40}") int rateBurstWeight,
+            @Value("${ztg.pip.risk.rate-l4-weight:40}") int rateL4Weight,
             @Value("${ztg.pip.risk.off-hours-weight:15}") int offHoursWeight,
             @Value("${ztg.pip.risk.burst-threshold:60}") int burstThreshold,
             @Value("${ztg.pip.risk.business-hour-start:9}") int businessHourStart,
@@ -43,6 +46,7 @@ public class RiskEngine {
         this.deviceUntrustedWeight = deviceUntrustedWeight;
         this.ipChangeWeight = ipChangeWeight;
         this.rateBurstWeight = rateBurstWeight;
+        this.rateL4Weight = rateL4Weight;
         this.offHoursWeight = offHoursWeight;
         this.burstThreshold = burstThreshold;
         this.businessHourStart = businessHourStart;
@@ -58,6 +62,16 @@ public class RiskEngine {
      * @return 점수 + 기여 신호 내역(설명 가능)
      */
     public RiskAssessment assess(SubjectAttributes base, RiskSignals signals, String lastSeenIp) {
+        return assess(base, signals, lastSeenIp, null);
+    }
+
+    /**
+     * 위험을 평가한다 — L4 플래그 포함 버전(D3).
+     *
+     * @param l4Flag 이 요청의 출발지 IP에 걸린 커널(XDP) L4 레이트 플래그({@code null}=없음/만료 → 무가중)
+     */
+    public RiskAssessment assess(SubjectAttributes base, RiskSignals signals, String lastSeenIp,
+                                 L4RateFlagStore.Flag l4Flag) {
         List<RiskFactor> factors = new ArrayList<>();
         int score = 0;
 
@@ -90,6 +104,17 @@ public class RiskEngine {
             factors.add(new RiskFactor("rate-burst", rateBurstWeight,
                     "%d requests in window exceed burst threshold %d".formatted(requests, burstThreshold)));
             score += rateBurstWeight;
+        }
+
+        // 3b) 커널(XDP) L4 레이트 플래그: 스택 진입 전 SYN 레이트 초과가 이 출발지에 보고됨(신호 타입 rate.l4).
+        //     3)의 rate-burst(rate.l7)와 관측축이 다르다 — L7은 "인증된 요청 수", L4는 "연결 시도 수"라
+        //     토큰 없는 플러드는 L4만 잡는다. 같은 관측의 이중 가산을 막으려 타입을 분리했고,
+        //     둘이 동시에 켜지면 각각 가산되는 것은 의도다(서로 다른 증거의 합산).
+        if (l4Flag != null) {
+            factors.add(new RiskFactor("rate-l4", rateL4Weight,
+                    "kernel(XDP) observed %d SYNs in %ds window from %s"
+                            .formatted(l4Flag.synsInWindow(), l4Flag.windowSeconds(), l4Flag.sourceIp())));
+            score += rateL4Weight;
         }
 
         // 4) 업무시간 외: 비정상 시각 접근.
