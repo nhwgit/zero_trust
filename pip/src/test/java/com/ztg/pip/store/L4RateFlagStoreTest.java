@@ -41,6 +41,11 @@ class L4RateFlagStoreTest {
     }
 
     @Test
+    void hold_seconds_exposes_configured_hold_for_enforcement_ttl() {
+        assertThat(store.holdSeconds()).isEqualTo(30L);   // 에지 차단 TTL(D3 Step 3)이 이 값과 동기화된다
+    }
+
+    @Test
     void unknown_or_null_ip_is_not_flagged() {
         assertThat(store.activeFlag("9.9.9.9")).isNull();
         assertThat(store.activeFlag(null)).isNull();

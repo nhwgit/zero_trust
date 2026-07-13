@@ -41,6 +41,11 @@ public class L4RateFlagStore {
         this.nanoClock = nanoClock;
     }
 
+    /** hold 길이(초) — 에지 차단(enforcement) TTL을 이 값과 동기화해 가역성 창을 하나로 유지한다(D3 Step 3). */
+    public long holdSeconds() {
+        return Duration.ofNanos(holdNanos).toSeconds();
+    }
+
     /** 이 소스 IP를 hold 동안 플래그한다. 재보고는 만료를 연장하고 근거를 최신으로 덮는다. */
     public Flag flag(String sourceIp, long synsInWindow, int windowSeconds) {
         Flag f = new Flag(sourceIp, synsInWindow, windowSeconds, nanoClock.getAsLong() + holdNanos);
