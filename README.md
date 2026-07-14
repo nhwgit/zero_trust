@@ -5,6 +5,8 @@ NIST SP 800-207의 표준 컴포넌트(PEP·PDP·PIP)를 Java/Spring 멀티모�
 로그인 시점의 1회 인증에서 끝나지 않고 세션 중에도 위험 신호를 반영해 접근을 회수하는
 지속검증(continuous & risk-adaptive authorization)까지 다룬다. 같은 세션에서 새 IP나
 요청 폭주가 관측되면 재로그인 없이 다음 요청부터 결정이 ALLOW에서 DENY로 바뀐다.
+이 판단은 L7 거부에서 멈추지 않고, 커널(eBPF/XDP)에서 위험 IP의 패킷을 직접 드랍하는
+트래픽 제어까지 이어진다(§5.3).
 
 ---
 
@@ -16,7 +18,7 @@ NIST SP 800-207의 표준 컴포넌트(PEP·PDP·PIP)를 Java/Spring 멀티모�
 
 | 표준 용어 (NIST SP 800-207) | 역할 | 이 프로젝트의 모듈 |
 |---|---|---|
-| PEP (Policy Enforcement Point) / Data Plane | 트래픽을 가로채 허용·차단을 집행 | `gateway` (Spring Cloud Gateway) |
+| PEP (Policy Enforcement Point) / Data Plane | 트래픽을 가로채 허용·차단을 집행 | `gateway` (L7, Spring Cloud Gateway) · `xdp/` (L3/4 커널, 선택 계층) |
 | PDP (Policy Decision Point) | 허용/거부를 판단 | `pdp` |
 | PIP (Policy Information Point) | 판단에 필요한 맥락·위험점수 제공 | `pip` |
 | IdP | "누가"를 증명 (로그인 → JWT) | Keycloak (Docker) |
@@ -26,41 +28,24 @@ NIST SP 800-207의 표준 컴포넌트(PEP·PDP·PIP)를 Java/Spring 멀티모�
 
 ## 2. 아키텍처
 
-```
-  ┌─────────┐  ① 로그인 → JWT 발급     ┌─────────────┐
-  │ Client  │ ◀────────────────────▶ │  Keycloak   │  ← IdP (OIDC, JWT 발급)
-  └────┬────┘                         └─────────────┘
-       │ ② 요청(JWT)
-       ▼
-  ┌──────────────┐  ③ 판단요청    ┌──────────┐
-  │   Gateway    │ ───────────▶ │   PDP    │
-  │  (DP / PEP)  │ ◀─────────── │ 정책결정  │
-  │ JWT 검증 +   │   허용/거부    └────┬─────┘
-  │ 정책 enforce │                    │ ④ 속성·위험 조회
-  │ (IP·레이트·   │                    ▼
-  │  시각 관측)   │               ┌──────────┐
-  └──────┬───────┘               │   PIP    │
-         │ ⑤ 허용시 통과          │ 위험점수  │
-         ▼                       │ 산출      │
-  ┌──────────────┐               └──────────┘
-  │ resource-api │
-  │  (보호대상)   │
-  └──────────────┘
+![아키텍처 다이어그램](docs/img/architecture.svg)
 
-검증 관계(다이어그램에는 생략, 흐름과 별개): Gateway와 resource-api는 각각 Keycloak의 JWKS로
-JWT를 독립 검증한다(서명/iss/exp). resource-api는 realm role로 인가까지 수행
-→ 게이트웨이를 우회한 직접호출도 막는 이중 검증. (위험신호 IP·레이트·시각은
-Gateway가 관측해 전달하고, PIP가 받아 위험점수로 산출.)
-```
+> 검증 관계(다이어그램에는 생략, 흐름과 별개): Gateway와 resource-api는 각각 Keycloak의
+> JWKS로 JWT를 독립 검증한다(서명/iss/exp). resource-api는 realm role로 인가까지 수행
+> → 게이트웨이를 우회한 직접호출도 막는 이중 검증. (위험신호 IP·레이트·시각은 Gateway가
+> 관측해 전달하고, PIP가 받아 위험점수로 산출.)
 
 요청 흐름을 따라가면 이렇다. Client가 Keycloak에서 JWT를 발급받아 요청에 싣는다.
+요청 패킷은 게이트웨이에 닿기 전에 커널 시행 계층(XDP)을 먼저 지난다 — PIP가 차단을
+지시한 IP면 스택 진입 전에 드랍되고(§5.3), 아니면 그대로 L7로 올라온다. 이 계층은
+탈부착 가능한 선택 계층이며 스스로 판단하지 않는다(관측과 집행만 한다).
 Gateway는 매 요청마다 JWT를 검증한 뒤 PDP에 "이 사용자가 이 리소스에 접근 가능한가"를
 질의하고, PDP는 PIP에서 주체 속성과 동적 위험점수를 받아 정책을 평가한다. 허용이면
 `resource-api`로 통과시키고 거부면 403을 반환한다. `resource-api`는 통과된 요청도 JWT를
 한 번 더 독립 검증하고 realm role로 인가하며, 내부 신뢰헤더와 mTLS로 게이트웨이를 우회한
 직접호출까지 차단한다.
 
-### 모듈 구성 (Gradle 멀티모듈)
+### 저장소 구성
 
 ```
 zero-trust-gateway/
@@ -69,14 +54,19 @@ zero-trust-gateway/
 ├── pip/            # 정책 정보 — 주체 속성 저장 + 동적 위험점수 산출, epoch 발신
 ├── resource-api/   # 보호 대상 백엔드 (게이트웨이 경유만 허용)
 ├── common/         # 모듈 간 DTO (Decision·Risk·Fanout 등)
+├── xdp/            # 커널 시행 계층(선택) — XDP C 프로그램 + Go 에이전트 (Gradle 빌드 밖, WSL에서 실행)
 └── docker/         # docker-compose, Keycloak realm, prometheus/grafana, 스모크·부하 스크립트
 ```
+
+위 5개 Java 모듈은 Gradle 멀티모듈로 묶이고, `xdp/`는 빌드 수명·툴체인(clang/Go)·실행
+주체(WSL 커널)가 달라 의도적으로 Gradle 밖에 둔다. `./gradlew build`에 영향이 없다.
 
 ---
 
 ## 3. 기술 스택
 
-- **언어/빌드:** Java 21 · Gradle 멀티모듈
+- **언어/빌드:** Java 21 · Gradle 멀티모듈 (컨트롤 플레인/L7) — 판단은 전부 여기서
+- **커널 시행 계층(선택):** C (eBPF/XDP, clang+libbpf) · Go 에이전트 (cilium/ebpf) — `xdp/`
 - **프레임워크:** Spring Boot 3.3
 - **Gateway(DP):** Spring Cloud Gateway (리액티브 GlobalFilter로 enforce)
 - **인증:** Spring Security Resource Server (JWT 검증, JWKS)
@@ -106,6 +96,7 @@ zero-trust-gateway/
 | `device-untrusted` | 관리되지 않는 단말 | 40 |
 | `ip-change` | 직전 관측과 다른 출발지 IP (이동·탈취 신호) | 30 |
 | `rate-burst` | 슬라이딩 윈도우 내 요청수가 임계 초과 (폭주·스크래핑) | 40 |
+| `rate-l4` | 커널(XDP)이 관측한 L4 SYN 폭주 — 토큰 없는 플러드도 잡힘 (§5.3) | 40 |
 | `off-hours` | 업무시간 외 접근 | 15 |
 
 가중치와 임계값은 모두 설정으로 빼 두어, 코드 수정 없이 조건만 바꿔 ALLOW/DENY 결과를
@@ -221,7 +212,8 @@ mTLS 적용 여부를 설정이나 로그가 아니라 tcpdump로 뜬 실제 패
 위험 판단(PIP)의 결과를 L7 거부에서 멈추지 않고 커널(XDP)에서 패킷을 직접 버리는 데까지
 이었다. 관측 지점과 제어 지점을 둘 다 L7에서 L3/4로 내린 것이다.
 
-- **관측 하강:** 커널 XDP가 per-source-IP로 SYN을 세어 PIP에 밀어 넣는다. 토큰 없는 SYN
+- **관측 하강:** 커널 XDP가 per-source-IP로 SYN을 세고, 사이드카가 임계 초과를 PIP에
+  신호로 밀어 넣는다. 토큰 없는 SYN
   플러드는 인증을 통과하지 못해 게이트웨이의 L7 레이트에는 안 잡히지만, 커널 L4 관측에는
   잡힌다. 플러드가 전부 401인데도 같은 세션이 ALLOW→DENY로 전이하는 것이 그 증거다.
 - **제어 하강:** 판단은 PIP가 하고 집행만 커널이 한다. PIP가 위험 IP에 대한 차단 지시(deny+TTL)를
@@ -230,7 +222,7 @@ mTLS 적용 여부를 설정이나 로그가 아니라 tcpdump로 뜬 실제 패
   오탐이 영구 차단으로 굳지 않는다.
 - **상대 성능:** 같은 SYN 플러드에서 유저스페이스가 401로 처리하면 게이트웨이 CPU가 avg
   108%(peak 206%)까지 뛰지만, XDP가 스택 진입 전에 드랍하면 idle(0.2%)에 머문다. 커널 드랍이
-  게이트웨이 CPU를 약 100% 덜어냈다(WSL 가상 환경이라 절대치가 아닌 상대 델타로만 해석).
+  게이트웨이 CPU 약 108%p를 덜어냈다(WSL 가상 환경이라 절대치가 아닌 상대 델타로만 해석).
 
 이 축(IP 단위 에지 차단)은 §4의 세션 단위 무효화를 대체하는 것이 아니라, 판단을 더 낮은
 계층으로 전파하는 별도 축이다. 정리 문서: [docs/packet-study/xdp-study.md](docs/packet-study/xdp-study.md)
