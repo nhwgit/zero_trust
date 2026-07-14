@@ -1,5 +1,5 @@
 // pdp — Policy Decision Point. 정책의 두뇌: 요청을 받아 PIP에서 맥락을 모아 ALLOW/DENY를 판단한다.
-// 1차는 Java 정책엔진으로 구현(roadmap 후반에 OPA/Rego로 교체 검토).
+// 1차는 Java 정책엔진으로 구현(추후 OPA/Rego 교체 검토).
 plugins {
     id 'org.springframework.boot'
 }

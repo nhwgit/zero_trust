@@ -1,4 +1,4 @@
-# mtls 프로파일 — 서비스간 mTLS (Phase 6-A). 기본 프로파일(application.yml)은 평문 HTTP 그대로다.
+# mtls 프로파일 — 서비스간 mTLS. 기본 프로파일(application.yml)은 평문 HTTP 그대로다.
 # 활성: SPRING_PROFILES_ACTIVE=mtls (up-mtls.ps1이 주입). 단위 테스트는 이 프로파일을 켜지 않는다.
 #
 # PDP는 두 역할을 동시에 한다:

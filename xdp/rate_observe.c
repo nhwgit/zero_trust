@@ -1,4 +1,4 @@
-// D3 Step 1: per-source-IP 패킷/SYN 카운트 관측 (drop 없음, 항상 XDP_PASS)
+// Step 1: per-source-IP 패킷/SYN 카운트 관측 (drop 없음, 항상 XDP_PASS)
 //
 // 관측 지점: ztg-gateway 컨테이너 netns 안 eth0 (Step 0 실험 결론 — host-side veth는 egress만 보임).
 // TLS라 L7은 안 보이므로 XDP가 셀 수 있는 것만 센다: IPv4 소스 IP별 전체 패킷 수 + TCP SYN(신규 연결 시도) 수.

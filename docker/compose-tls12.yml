@@ -1,9 +1,9 @@
-# D2 패킷관측 전용 override — pdp/pip 데이터 포트의 mTLS를 TLS 1.2로 강제한다.
+# 패킷관측 전용 override — pdp/pip 데이터 포트의 mTLS를 TLS 1.2로 강제한다.
 #
 # 왜: TLS 1.3은 ServerHello 이후 핸드셰이크(Certificate·CertificateRequest·CertificateVerify)를
 # 전부 핸드셰이크 트래픽 키로 암호화한다 → 와이어에서 type 13(CertificateRequest)이 안 보인다.
 # TLS 1.2는 이 메시지들이 평문이라 Wireshark에서 server CN=pdp / client CN=gateway / type 13을
-# 눈으로 본다("mTLS를 와이어로 입증" = D2의 결정적 한 컷).
+# 눈으로 본다("mTLS를 와이어로 입증"의 결정적 한 컷).
 #
 # ⚠️ 핵심 함정: SSL 번들(server.ssl.bundle)을 쓰면 server.ssl.enabled-protocols 가 무시된다.
 # 반드시 번들 옵션 spring.ssl.bundle.jks.<name>.options.enabled-protocols 로 설정해야 한다.

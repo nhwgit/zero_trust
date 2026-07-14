@@ -1,5 +1,5 @@
 #!/bin/bash
-# D3 Step 0: XDP 툴체인 설치 (root로 실행)
+# Step 0: XDP 툴체인 설치 (root로 실행)
 OUT=/mnt/c/Users/USER/Desktop/nhw/project/keycloak/xdp/out/step0-install.out
 mkdir -p "$(dirname "$OUT")"
 exec > "$OUT" 2>&1

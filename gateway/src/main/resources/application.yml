@@ -27,7 +27,7 @@ ztg:
     # 토큰 검증 기준. resource-api와 동일한 issuer여야 한다(JWKS는 .well-known에서 조회).
     issuer-uri: ${KC_ISSUER_URI:http://localhost:8081/realms/ztg}
     # 게이트웨이를 통과한 요청임을 증명하는 내부 신뢰 헤더의 공유 비밀.
-    # resource-api가 동일 값을 검증해 우회 직접호출을 차단한다(데모용 정적 비밀 — Phase 6에서 mTLS로 대체).
+    # resource-api가 동일 값을 검증해 우회 직접호출을 차단한다(데모용 정적 비밀 — mtls 프로파일에선 mTLS가 대체).
     trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}
     # PDP(정책결정) 위치. JWT 검증 통과 후 매 요청마다 여기에 인가를 질의한다.
     pdp-base-uri: ${PDP_BASE_URI:http://localhost:8084}
@@ -51,7 +51,7 @@ ztg:
   fanout:
     enabled: ${FANOUT_ENABLED:false}
 
-# 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
+# 관측: Prometheus가 /actuator/prometheus를 스크랩한다.
 management:
   health:
     redis:

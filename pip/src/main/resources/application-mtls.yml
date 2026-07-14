@@ -1,4 +1,4 @@
-# mtls 프로파일 — 서비스간 mTLS (Phase 6-A). 기본 프로파일(application.yml)은 평문 HTTP 그대로다.
+# mtls 프로파일 — 서비스간 mTLS. 기본 프로파일(application.yml)은 평문 HTTP 그대로다.
 # 활성: SPRING_PROFILES_ACTIVE=mtls (up-mtls.ps1이 주입). 단위/통합테스트는 이 프로파일을 켜지 않는다.
 #
 # PIP는 데이터 플레인(8083)을 mTLS로 잠그고, PDP가 제시하는 클라 인증서를 CA로 검증한다(client-auth: need).

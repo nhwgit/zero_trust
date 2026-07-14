@@ -5,7 +5,7 @@ spring:
   application:
     name: pdp
 
-# 분산 추적(Phase 4 Step 3): 모든 로그 라인에 요청 추적 ID([requestId])를 찍어
+# 분산 추적: 모든 로그 라인에 요청 추적 ID([requestId])를 찍어
 # 게이트웨이→PDP→PIP를 같은 ID로 상관한다. RequestIdFilter가 MDC에 값을 채운다.
 logging:
   pattern:
@@ -28,7 +28,7 @@ ztg:
       connect-timeout-ms: ${PIP_POOL_CONNECT_TIMEOUT_MS:2000}
       socket-timeout-ms: ${PIP_POOL_SOCKET_TIMEOUT_MS:5000}
 
-# 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
+# 관측: Prometheus가 /actuator/prometheus를 스크랩한다.
 management:
   endpoints:
     web:

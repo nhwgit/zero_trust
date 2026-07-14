@@ -1,4 +1,4 @@
-# Grafana 데이터소스 자동 프로비저닝 (Phase 4 Step 2)
+# Grafana 데이터소스 자동 프로비저닝
 # grafana 컨테이너에서 prometheus 컨테이너는 compose 기본 네트워크의 서비스명으로 접근한다.
 apiVersion: 1
 

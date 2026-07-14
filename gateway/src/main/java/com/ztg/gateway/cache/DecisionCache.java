@@ -23,9 +23,9 @@ import com.ztg.common.model.RiskSignals;
  * <p><b>키:</b> {@link DecisionRequest} 값(subject+action+resource+context)에서 <b>휘발성 레이트 신호를
  * 뺀</b> 정규화 요청 + <b>주체의 현재 epoch</b>. {@code source-ip}·{@code hour-of-day}는 키에 남겨 새 IP/시간대는
  * 자동 캐시 미스 → 재평가가 되지만, {@code requests-in-window}는 매 요청 달라져 키에 넣으면 캐시가 통째로
- * 무력화되므로 제외한다(README 결정 #3). 레이트 급증은 키 분기가 아니라 <b>능동 무효화(epoch bump)</b>로 처리한다.
+ * 무력화되므로 제외한다. 레이트 급증은 키 분기가 아니라 <b>능동 무효화(epoch bump)</b>로 처리한다.
  *
- * <p><b>능동 무효화 = 주체별 epoch 키(README 결정 #1):</b> PIP가 위험 변화를 감지하면 epoch를 +1 해
+ * <p><b>능동 무효화 = 주체별 epoch 키:</b> PIP가 위험 변화를 감지하면 epoch를 +1 해
  * {@link DecisionResponse#epoch()}로 게이트웨이까지 역전파한다. 게이트웨이(여기)는 결정을 적재할 때 그 epoch를
  * <b>학습</b>(주체별 단조 증가)하고, 그 주체의 모든 캐시 키에 현재 epoch를 끼운다. 따라서 epoch가 한 번 오르면
  * 그 주체의 <b>옛 엔트리는 모두 한 번에 키-아웃</b>(다른 epoch라 더는 조회되지 않음) → 같은 세션에서 <b>재로그인
@@ -35,7 +35,7 @@ import com.ztg.common.model.RiskSignals;
  * 새 epoch를 안다. 노드가 여럿이면 위험을 유발하지 않은 다른 노드는 TTL 동안 옛 ALLOW를 계속 히트로 낸다.
  * 그래서 epoch 권위자(PIP)가 epoch를 올리는 순간 Redis pub/sub으로 fan-out하고, 각 노드는
  * {@link #applyRemoteEpoch}로 즉시 학습 epoch를 끌어올려 <b>전 노드의 캐시를 동시에</b> 키-아웃한다.
- * pub/sub 유실 시에도 lazy 학습+TTL이 백스톱이라 무효화는 보장된다([[EpochFanout]]).
+ * pub/sub 유실 시에도 lazy 학습+TTL이 백스톱이라 무효화는 보장된다({@link com.ztg.common.fanout.EpochFanout}).
  *
  * <p><b>위험적응 TTL:</b> 적재 TTL은 결정의 위험 점수에 따라 달라진다 — 위험이 높을수록 <b>짧게</b> 캐싱해
  * 더 자주 재평가한다({@code high-risk-score} 이상 → {@code high-risk-ttl}). 위험 변화의 능동 무효화(epoch)와
@@ -194,7 +194,7 @@ public class DecisionCache {
      * 직전 밴드를 회수해 비교하므로 <b>엣지 트리거</b>다 — 밴드가 유지되는 동안엔 전이가 아니라 캐시가 정상 동작한다.
      *
      * <p>첫 관측(직전 밴드 없음)은 전이로 보지 않는다(기준만 세움). 레이트 신호가 없거나 숫자가 아니면 비교를
-     * 건너뛴다(부재는 트리거 아님). 레이트 자체는 캐시 키에서 제외돼 있어(결정 #3) 이 비교만이 급증을 캐시에 알린다.
+     * 건너뛴다(부재는 트리거 아님). 레이트 자체는 캐시 키에서 제외돼 있어 이 비교만이 급증을 캐시에 알린다.
      */
     private boolean rateBandChanged(DecisionRequest request) {
         Map<String, String> context = request.context();
@@ -218,8 +218,8 @@ public class DecisionCache {
     /**
      * 캐시 키를 만든다 — 요청에서 <b>휘발성 레이트 신호</b>({@link RiskSignals#CTX_REQUESTS_IN_WINDOW})를
      * 걷어낸 정규화 요청에, 주어진 <b>epoch</b>를 끼운다. 레이트를 빼는 이유는 매 요청 달라져 키에 넣으면
-     * 캐시가 무력화되기 때문이다(결정 #3). 나머지 맥락(source-ip·hour-of-day)은 그대로 둬 새 IP/시간대가 정상적으로
-     * 다른 키가 되게 한다. epoch를 끼우는 이유는 위험 변화 시 옛 엔트리를 한 번에 키-아웃하기 위함이다(결정 #1).
+     * 캐시가 무력화되기 때문이다. 나머지 맥락(source-ip·hour-of-day)은 그대로 둬 새 IP/시간대가 정상적으로
+     * 다른 키가 되게 한다. epoch를 끼우는 이유는 위험 변화 시 옛 엔트리를 한 번에 키-아웃하기 위함이다.
      *
      * <p>epoch를 인자로 받는 이유: 조회는 주체의 <b>현재</b> 세대({@code knownEpochs})로, 적재는 <b>그 결정의</b>
      * 세대로 키잉해야 경합 시 stale 결정이 신선한 결정을 덮지 않는다({@link #put} 경합 안전 참고).

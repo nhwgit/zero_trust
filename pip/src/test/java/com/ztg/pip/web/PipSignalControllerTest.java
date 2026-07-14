@@ -17,7 +17,7 @@ import org.springframework.web.server.ResponseStatusException;
 import com.ztg.common.model.RiskSignals;
 
 /**
- * 신호 수신 표면 L2 — D3 Step 3의 핵심은 ack에 실리는 <b>enforcement 지시</b>다:
+ * 신호 수신 표면 검증 — 핵심은 ack에 실리는 <b>enforcement 지시</b>다:
  * PIP(판단)가 "이 IP를 hold와 같은 TTL 동안 에지에서 차단하라"를 반환하고, 에이전트가 이를
  * 커널 deny map에 번역한다. TTL == hold 동기화(세션 무효화와 에지 차단의 가역성 창 일치)를 검증한다.
  */

@@ -1,5 +1,5 @@
 #!/bin/bash
-# D3 Step 2 e2e: 커널(XDP) 관측 → Go 에이전트 rate.l4 신호 → PIP 재평가(epoch bump) →
+# Step 2 e2e: 커널(XDP) 관측 → Go 에이전트 rate.l4 신호 → PIP 재평가(epoch bump) →
 #                재로그인 없는 ALLOW→DENY → hold 만료 후 ALLOW 복귀 (root, docker mTLS 스택 위)
 #
 # 시나리오: alice가 172.18.0.1(WSL 호스트=도커 브리지 GW)에서 정상 사용 중, 같은 호스트에서

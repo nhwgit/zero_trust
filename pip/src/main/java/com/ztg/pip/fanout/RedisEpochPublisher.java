@@ -11,7 +11,7 @@ import com.ztg.common.fanout.EpochFanout;
  * 모든 게이트웨이가 동시에 캐시를 키-아웃하게 한다. {@code ztg.fanout.enabled=true}일 때만 빈으로 등록된다.
  *
  * <p><b>fail-open:</b> Redis가 잠깐 끊겨 publish가 실패해도 예외를 흘리지 않는다 — fan-out은 무효화를
- * 앞당기는 가속기일 뿐이고, 게이트웨이별 lazy 학습+TTL이 백스톱이다([[EpochFanout]]). 위험 평가 자체가
+ * 앞당기는 가속기일 뿐이고, 게이트웨이별 lazy 학습+TTL이 백스톱이다({@link EpochFanout}). 위험 평가 자체가
  * 캐시 전파 실패로 막히면 안 되므로(가용성), 로그만 남기고 진행한다.
  *
  * <p>이 publish는 평가(assess) 경로에서 <b>동기</b>로 일어나므로, Redis가 예외 없이 <b>행(hang)</b>하면

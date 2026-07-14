@@ -1,6 +1,6 @@
-# 다중 게이트웨이 능동 무효화 fan-out 데모용 Redis 브로커 (D1 ④ — Redis pub/sub).
+# 다중 게이트웨이 능동 무효화 fan-out 데모용 Redis 브로커 (Redis pub/sub).
 #
-# fan-out 채널만 쓰므로 영속/AOF가 필요 없다(at-most-once + 게이트웨이별 TTL 백스톱). D1 스모크와 같은
+# fan-out 채널만 쓰므로 영속/AOF가 필요 없다(at-most-once + 게이트웨이별 TTL 백스톱). smoke-d1.ps1과 같은
 # bootRun(평문) 패턴을 그대로 쓰되 — PIP attribute PUT을 위해 평문 PIP가 필요 — Redis만 컨테이너로 띄운다.
 #
 # 기동:  docker compose -f docker/docker-compose.yml -f docker/compose-fanout.yml up -d redis

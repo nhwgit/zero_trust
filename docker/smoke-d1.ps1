@@ -1,6 +1,6 @@
-# D1 스모크 — 지속검증 / 위험적응 인가: "재로그인 없이 ALLOW -> DENY -> ALLOW" (Windows/PowerShell)
+# 지속검증 / 위험적응 인가 스모크: "재로그인 없이 ALLOW -> DENY -> ALLOW" (Windows/PowerShell)
 #
-# 무엇을 증명하나(= resume.md D1 줄):
+# 무엇을 증명하나:
 #   PIP가 위험점수(IP변화·요청레이트)를 산출 -> 위험 상승 시 능동 캐시 무효화(epoch) ->
 #   같은 세션·같은 토큰으로 ALLOW가 DENY로 전이(재로그인 없음), 위험이 가시면 다시 ALLOW.
 #

@@ -1,4 +1,4 @@
-﻿# Phase 3 스모크 — PDP/PIP 정책 분리 검증 (Windows/PowerShell)
+﻿# PDP/PIP 정책 분리 스모크 (Windows/PowerShell)
 # 전제: 아래 5개가 모두 떠 있어야 한다.
 #   Keycloak(8081):     wsl bash docker/kc-hold.sh
 #   pip(8083):          .\gradlew.bat :pip:bootRun
@@ -57,7 +57,7 @@ $bob   = Token "bob"   "bob123"
 $hAlice = @{ Authorization = "Bearer $alice" }
 $hBob   = @{ Authorization = "Bearer $bob" }
 
-Write-Host "`n== 0) Phase 2 회귀(인증/PEP 경유) ==" -ForegroundColor Cyan
+Write-Host "`n== 0) 회귀 — 인증/PEP 경유 강제 ==" -ForegroundColor Cyan
 Check "게이트웨이 무토큰 /api/hello -> 401"        (Code "$GW/api/hello" @{})  401
 Check "직접호출(우회) /api/hello -> 403"           (Code "$RES/api/hello" $hAlice) 403
 Check "게이트웨이 alice /api/hello -> 200"         (Code "$GW/api/hello" $hAlice) 200

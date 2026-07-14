@@ -1,5 +1,5 @@
 #!/bin/bash
-# D3 Step 0: hello-XDP 컴파일 → ztg-gateway veth에 native(xdpdrv) attach/detach 스파이크 (root)
+# Step 0: hello-XDP 컴파일 → ztg-gateway veth에 native(xdpdrv) attach/detach 스파이크 (root)
 # 관측 방향 실험 포함: (A) host-side veth peer = 컨테이너발 패킷 RX, (B) 컨테이너 netns eth0 = 컨테이너行 ingress RX
 PROJ=/mnt/c/Users/USER/Desktop/nhw/project/keycloak/xdp
 OUT=/mnt/c/Users/USER/Desktop/nhw/project/keycloak/xdp/out/step0-spike.out

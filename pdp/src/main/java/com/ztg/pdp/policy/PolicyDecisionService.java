@@ -17,7 +17,7 @@ import com.ztg.common.model.RiskSignals;
  * 판단 오케스트레이션 — PIP에서 맥락(속성+동적 위험점수+epoch)을 모아 {@link PolicyEngine}으로 평가한다.
  *
  * <p>게이트웨이가 {@link DecisionRequest#context()}에 실은 휘발성 신호를 {@link RiskSignals#fromContext}로
- * 복원해 PIP에 넘긴다(step 3에서 게이트웨이가 채우기 전엔 빈 맥락 → 중립 신호).
+ * 복원해 PIP에 넘긴다(맥락이 비어 있으면 중립 신호로 복원된다).
  *
  * <p>설계 메모(fail-close): PIP 조회가 실패하면(네트워크/PIP 다운) 맥락 없이 판단할 수 없으므로
  * <b>DENY</b>한다. "판단 불가 = 차단"이 제로트러스트 안전 기본값이다.

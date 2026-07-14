@@ -6,11 +6,11 @@ import java.util.Map;
  * 게이트웨이(PEP)가 관측해 전달하는 <b>휘발성</b> 위험 신호. 요청마다 달라진다.
  *
  * <p>저장 속성({@link SubjectAttributes}: 부서/디바이스/baseline)과 달리, 이 값들은 "지금 이 요청"의
- * 맥락이다. 게이트웨이는 모든 요청(캐시 히트 포함)을 보므로 레이트/IP의 권위 있는 관측자다(README 결정 #3).
+ * 맥락이다. 게이트웨이는 모든 요청(캐시 히트 포함)을 보므로 레이트/IP의 권위 있는 관측자다.
  *
  * <p>전송 경로: 게이트웨이가 {@link DecisionRequest#context()}에 {@code CTX_*} 키로 실으면,
  * PDP가 {@link #fromContext(Map)}로 복원해 PIP에 전달한다. 키 상수를 한 곳에 둬 PEP/PDP가 같은
- * 어휘를 쓰게 한다(게이트웨이 주입은 step 3에서 채운다 — 그 전까지 context는 비어 {@link #none()}).
+ * 어휘를 쓰게 한다(신호가 없으면 context는 비고, 수신 쪽은 {@link #none()} 중립값으로 폴백한다).
  *
  * @param sourceIp         이번 요청의 출발지 IP(직전 관측과 비교해 IP 변화 신호 산출)
  * @param requestsInWindow 슬라이딩 윈도우 동안 이 주체의 요청 수(레이트 급증 신호)

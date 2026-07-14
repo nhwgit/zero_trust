@@ -1,4 +1,4 @@
-# Prometheus 스크랩 설정 (Phase 4 Step 2)
+# Prometheus 스크랩 설정
 #
 # 토폴로지 주의: Prometheus는 WSL 도커 컨테이너 안에서 돌고,
 # 스크랩 대상(gateway/pdp/pip/resource-api JVM)은 Windows 호스트에서 bootRun으로 돈다.

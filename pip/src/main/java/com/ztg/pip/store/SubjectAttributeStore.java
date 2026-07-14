@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 import com.ztg.common.model.SubjectAttributes;
 
 /**
- * 주체 속성의 in-memory 저장소. 초기엔 메모리, 후반(roadmap)에는 Redis/PostgreSQL로 교체.
+ * 주체 속성의 in-memory 저장소. 데모용 단순화 — 실서비스라면 Redis/PostgreSQL 등 외부 저장소로 교체.
  *
  * <p>데모 시드: realm의 사용자(alice/bob)에 부서·디바이스신뢰·위험점수를 부여한다.
  * 데모에서 정책 조건을 바꿔보기 위해 {@link #put}으로 런타임에 속성을 변경할 수 있다.

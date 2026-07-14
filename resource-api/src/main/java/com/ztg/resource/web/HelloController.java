@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Phase 1 — 보호 리소스. 유효한 Keycloak JWT가 있어야 접근 가능하다.
+ * 보호 리소스 — 유효한 Keycloak JWT가 있어야 접근 가능하다.
  * 인증 주체(JWT)는 SecurityConfig의 필터 체인이 검증·주입한다.
  */
 @RestController

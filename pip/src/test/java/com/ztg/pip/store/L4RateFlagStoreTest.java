@@ -42,7 +42,7 @@ class L4RateFlagStoreTest {
 
     @Test
     void hold_seconds_exposes_configured_hold_for_enforcement_ttl() {
-        assertThat(store.holdSeconds()).isEqualTo(30L);   // 에지 차단 TTL(D3 Step 3)이 이 값과 동기화된다
+        assertThat(store.holdSeconds()).isEqualTo(30L);   // 에지 차단(enforcement) TTL이 이 값과 동기화된다
     }
 
     @Test

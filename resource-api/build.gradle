@@ -1,5 +1,5 @@
 // resource-api — 보호 대상 백엔드.
-// Phase 1: Spring Security Resource Server로 Keycloak이 발급한 JWT를 검증한다.
+// Spring Security Resource Server로 Keycloak이 발급한 JWT를 검증한다.
 plugins {
     id 'org.springframework.boot'
 }

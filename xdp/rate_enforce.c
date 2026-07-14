@@ -1,4 +1,4 @@
-// D3 Step 3: 관측(rate_observe와 동일) + enforcement — deny map에 오른 소스 IP를 스택 진입 전 드랍.
+// Step 3: 관측(rate_observe와 동일) + enforcement — deny map에 오른 소스 IP를 스택 진입 전 드랍.
 //
 // 판단→제어 체인: PIP가 신호 ack에 enforcement 지시(deny+TTL)를 실어 주면 에이전트가 이 map에
 // {만료시각, 0}을 기록한다. 커널은 스스로 판단하지 않는다 — map에 적힌 결정을 집행만 한다.

@@ -1,6 +1,6 @@
-# D1 ④ fan-out 스모크 — 다중 게이트웨이 능동 무효화(Redis pub/sub) (Windows/PowerShell)
+# fan-out 스모크 — 다중 게이트웨이 능동 무효화(Redis pub/sub) (Windows/PowerShell)
 #
-# 무엇을 증명하나(= resume.md D1 ④): 한 게이트웨이(GW1)에서 위험이 올라 PIP가 epoch를 bump하면,
+# 무엇을 증명하나: 한 게이트웨이(GW1)에서 위험이 올라 PIP가 epoch를 bump하면,
 # PIP가 Redis 채널로 publish하고 "위험을 유발하지 않은" GW2도 그 메시지를 받아 캐시를 즉시 키-아웃한다.
 # 그래서 GW2는 자기 PDP 왕복(=옛 epoch 학습)을 기다리지 않고, TTL이 남았는데도 다음 요청부터 재평가한다 →
 # 같은 토큰·재로그인 없이 GW2의 ALLOW가 DENY로 전이한다. (fan-out이 없었다면 GW2는 TTL 동안 옛 ALLOW 유지.)

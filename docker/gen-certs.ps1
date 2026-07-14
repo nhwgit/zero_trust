@@ -1,4 +1,4 @@
-# 서비스간 mTLS용 자체 CA + 서비스 인증서 발급 (Phase 6-A)
+# 서비스간 mTLS용 자체 CA + 서비스 인증서 발급
 #
 # 왜: gateway↔pdp↔pip 내부 호출을 mTLS로 잠가 "내부망이라 신뢰"를 제거한다(zero-trust).
 # 자체(사설) CA 하나로 각 서비스 인증서를 서명하고, 상대 검증용 truststore에는 CA만 담는다.

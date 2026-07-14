@@ -16,7 +16,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import com.ztg.common.web.RequestIdFilter;
 
 /**
- * Phase 1 — Resource Server 보안 설정.
+ * Resource Server 보안 설정.
  *
  * <p>Keycloak이 발급한 JWT(Bearer)를 검증한다. 서명/만료/issuer 검증은
  * issuer-uri로 자동 구성되는 JwtDecoder가 담당한다(JWKS 공개키로 검증).

@@ -17,8 +17,8 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * Phase 1+2 완료 기준 검증: 유효 토큰 200 / 무·잘못된 토큰 401 / 역할 없으면 403.
- * 추가로 Phase 2: 게이트웨이 신뢰 헤더가 없으면(우회 직접호출) 유효 토큰이어도 403.
+ * 보호 리소스 접근 규칙 검증: 유효 토큰 200 / 무·잘못된 토큰 401 / 역할 없으면 403.
+ * 추가로 게이트웨이 신뢰 헤더가 없으면(우회 직접호출) 유효 토큰이어도 403.
  *
  * <p>JwtDecoder는 @MockBean으로 대체한다 — 단위 테스트라 실제 Keycloak(JWKS)에
  * 접속하지 않는다. jwt() post-processor가 검증된 인증을 직접 주입하므로 디코더는 호출되지 않는다.
@@ -74,7 +74,7 @@ class HelloControllerTest {
                 .andExpect(jsonPath("$.username").value("bob"));
     }
 
-    /** Phase 2: 게이트웨이를 우회한 직접 호출(신뢰 헤더 없음)은 유효 토큰이어도 403으로 막힌다. */
+    /** 게이트웨이를 우회한 직접 호출(신뢰 헤더 없음)은 유효 토큰이어도 403으로 막힌다. */
     @Test
     void bypass_without_trust_header_is_403() throws Exception {
         mockMvc.perform(get("/api/hello")
@@ -84,7 +84,7 @@ class HelloControllerTest {
                 .andExpect(status().isForbidden());
     }
 
-    /** Phase 2: 신뢰 헤더 값이 틀리면(위조 시도) 차단된다. */
+    /** 신뢰 헤더 값이 틀리면(위조 시도) 차단된다. */
     @Test
     void bypass_with_wrong_trust_header_is_403() throws Exception {
         mockMvc.perform(get("/api/hello")

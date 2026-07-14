@@ -21,8 +21,8 @@ import com.ztg.common.model.SubjectAttributes;
  * 정책 엔진 단위 검증 — 완료 기준("조건을 바꾸면 동일 주체의 결과가 ALLOW↔DENY로 바뀐다")을
  * 부서/시간/디바이스/위험 축으로 각각 확인한다. 시각은 고정 Clock으로 결정적으로 만든다.
  *
- * <p>D1: 위험 점수는 더 이상 정적 {@code attrs.riskScore()}가 아니라 PIP가 산출한 동적
- * {@link RiskAssessment}에서 온다(README 결정 #2). 그래서 위험 축 테스트는 RiskAssessment로 점수를 준다.
+ * <p>위험 점수는 정적 {@code attrs.riskScore()}가 아니라 PIP가 산출한 동적
+ * {@link RiskAssessment}에서 온다. 그래서 위험 축 테스트는 RiskAssessment로 점수를 준다.
  */
 class PolicyEngineTest {
 

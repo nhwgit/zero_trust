@@ -1,5 +1,5 @@
 #!/bin/bash
-# D3 Step 1: rate_observe.c 컴파일 → ztg-gateway 컨테이너 netns eth0에 native attach →
+# Step 1: rate_observe.c 컴파일 → ztg-gateway 컨테이너 netns eth0에 native attach →
 #            트래픽 생성(ping + curl 연발) → src_ip_stats map으로 per-source-IP pkts/syns 확인 → detach (root)
 # Step 0 결론 재사용: ingress 관측은 컨테이너 안 eth0. mount ns는 유지되므로 obj 경로는 호스트 경로 그대로.
 PROJ=/mnt/c/Users/USER/Desktop/nhw/project/keycloak/xdp

@@ -24,7 +24,7 @@ import com.ztg.common.model.SubjectAttributes;
  *   <li><b>기본 허용</b>: 명시적 정책이 없는 리소스는 ALLOW(인증은 이미 게이트웨이에서 통과).</li>
  * </ol>
  *
- * <p>설계 메모(README 결정 #2): 위험 <b>점수 산출은 PIP</b>(정보점), 여기 PDP(결정점)는 <b>임계만</b>
+ * <p>설계 메모: 위험 <b>점수 산출은 PIP</b>(정보점), 여기 PDP(결정점)는 <b>임계만</b>
  * 적용한다. 그래서 정적 {@code attrs.riskScore()}가 아니라 동적 {@link RiskAssessment}를 임계와 비교하고,
  * DENY 사유에 {@link RiskAssessment#explain()}(기여 신호 내역)을 그대로 실어 설명 가능한 거부를 만든다.
  * 모든 결정에 위험점수+{@code epoch}를 실어 게이트웨이가 epoch를 학습(능동 무효화)하게 한다.

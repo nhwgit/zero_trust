@@ -1,4 +1,4 @@
-// D3 Step 0 스파이크: 패킷 카운트만 하는 hello-XDP (drop 없음, XDP_PASS)
+// Step 0 스파이크: 패킷 카운트만 하는 hello-XDP (drop 없음, XDP_PASS)
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 

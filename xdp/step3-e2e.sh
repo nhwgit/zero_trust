@@ -1,5 +1,5 @@
 #!/bin/bash
-# D3 Step 3 e2e: 판단(PIP) → 트래픽 제어(XDP) 캡스톤.
+# Step 3 e2e: 판단(PIP) → 트래픽 제어(XDP) 캡스톤.
 #   커널(XDP) 관측 → Go 에이전트 rate.l4 신호 → PIP가 ack에 enforcement(deny+TTL) 반환 →
 #   에이전트가 커널 deny map에 기록 → 위험 소스 IP 패킷이 스택 진입 전 DROP →
 #   TTL(=hold) 만료 후 자동 해제(에이전트 sweep) → 다시 통과. (root, docker mTLS 스택 위)

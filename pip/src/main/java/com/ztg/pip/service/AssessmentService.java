@@ -28,9 +28,9 @@ import com.ztg.common.model.SubjectAttributes;
  *
  * <p><b>fan-out(다중 GW):</b> epoch가 실제로 <b>올랐을 때만</b> {@link EpochPublisher}로 전파한다 —
  * 변화 순간을 권위자(PIP)가 알리므로, 위험을 유발하지 않은 게이트웨이도 자기 PDP 왕복을 기다리지 않고
- * 캐시를 키-아웃한다([[EpochFanout]]). 같은 점수 반복(epoch 불변)은 publish하지 않아 채널이 조용하다.
+ * 캐시를 키-아웃한다({@link com.ztg.common.fanout.EpochFanout}). 같은 점수 반복(epoch 불변)은 publish하지 않아 채널이 조용하다.
  *
- * <p><b>L4 신호(D3):</b> 커널(XDP) 에이전트가 요청 밖(out-of-band)에서 소스 IP 단위 레이트 초과를
+ * <p><b>L4 신호:</b> 커널(XDP) 에이전트가 요청 밖(out-of-band)에서 소스 IP 단위 레이트 초과를
  * 보고하면({@link #applyL4RateSignal}), 플래그를 걸고 그 IP를 쓰는 주체들을 <b>즉시 재평가</b>한다 —
  * 점수 상승이 기존 경로(epoch bump → fan-out → 캐시 키-아웃)를 그대로 타므로, 신호원만 L7→커널로
  * 내려갔을 뿐 무효화 체계는 재사용이다.
@@ -87,7 +87,7 @@ public class AssessmentService {
     }
 
     /**
-     * 커널(XDP) 에이전트의 L4 레이트 신호를 반영한다(D3 Step 2): ① 소스 IP를 hold 동안 플래그하고,
+     * 커널(XDP) 에이전트의 L4 레이트 신호를 반영한다: ① 소스 IP를 hold 동안 플래그하고,
      * ② 그 IP를 직전 관측으로 가진 주체들을 즉시 재평가한다 — rate-l4 가중으로 점수가 변하면
      * {@link #assess} 안에서 epoch bump + fan-out이 그대로 일어난다(능동 무효화 경로 재사용).
      *

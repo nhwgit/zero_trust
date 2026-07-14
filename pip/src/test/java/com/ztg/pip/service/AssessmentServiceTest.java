@@ -71,7 +71,7 @@ class AssessmentServiceTest {
 
     @Test
     void l4_rate_signal_reassesses_subjects_on_that_ip_and_bumps_epoch() {
-        // D3 Step 2 코어: 커널(XDP) 신호가 기존 능동 무효화 경로(점수 변화 → epoch bump → fan-out)를 탄다.
+        // 핵심: 커널(XDP) 신호가 기존 능동 무효화 경로(점수 변화 → epoch bump → fan-out)를 탄다.
         // 1) alice가 IP A에서 정상 관측(score 10, epoch 0) — lastSeenIp=A가 신호→주체 번역의 근거가 된다.
         service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
 

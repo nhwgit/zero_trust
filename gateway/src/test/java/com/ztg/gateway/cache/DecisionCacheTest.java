@@ -19,7 +19,7 @@ import com.ztg.common.model.RiskSignals;
 
 /**
  * {@link DecisionCache} 단위 테스트 — 값 동등성 키, 휘발성 레이트 제외, source-ip 분기, enabled 토글에 더해
- * D1 능동 무효화(주체 epoch 키)와 위험적응 TTL을 검증한다. 시간 의존 테스트는 단조 시계를 주입해 결정적으로 둔다.
+ * 능동 무효화(주체 epoch 키)와 위험적응 TTL을 검증한다. 시간 의존 테스트는 단조 시계를 주입해 결정적으로 둔다.
  */
 class DecisionCacheTest {
 
@@ -63,7 +63,7 @@ class DecisionCacheTest {
 
     @Test
     void hitsWhenOnlyVolatileRateDiffers() {
-        // 레이트 신호는 매 요청 달라지지만 캐시 키에서 제외되므로, 나머지 맥락이 같으면 히트해야 한다(결정 #3).
+        // 레이트 신호는 매 요청 달라지지만 캐시 키에서 제외되므로, 나머지 맥락이 같으면 히트해야 한다.
         DecisionCache cache = cache(true);
         DecisionResponse stored = DecisionResponse.allow("ok");
         cache.put(requestWithCtx("alice", "/api/hello", "203.0.113.7", "1"), stored);
@@ -83,7 +83,7 @@ class DecisionCacheTest {
 
     @Test
     void evictsPriorEntriesWhenSubjectEpochAdvances() {
-        // 능동 무효화(결정 #1): 위험 상승으로 epoch가 오르면 그 주체의 옛 엔트리가 한 번에 키-아웃된다.
+        // 능동 무효화: 위험 상승으로 epoch가 오르면 그 주체의 옛 엔트리가 한 번에 키-아웃된다.
         DecisionCache cache = cache(true);
         cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 0));
         cache.put(request("alice", "/api/b"), decision(Decision.ALLOW, 10, 0));

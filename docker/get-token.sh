@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 0 — Keycloak에서 access token을 발급(password grant)받아 payload(claims)를 디코딩해 출력한다.
+# Keycloak에서 access token을 발급(password grant)받아 payload(claims)를 디코딩해 출력한다.
 # 사용: ./get-token.sh [username] [password]
 #   예: ./get-token.sh alice alice123
 set -euo pipefail

@@ -116,7 +116,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         String method = exchange.getRequest().getMethod().name();
         String path = exchange.getRequest().getPath().value();
         String requestId = requestIdOf(exchange);
-        // PEP가 본 요청 맥락(출발지 IP·레이트·시각)을 위험 신호로 실어 PDP→PIP까지 전달한다(README 결정 #3).
+        // PEP가 본 요청 맥락(출발지 IP·레이트·시각)을 위험 신호로 실어 PDP→PIP까지 전달한다.
         DecisionRequest request = new DecisionRequest(subject, method, path, observeRiskContext(exchange, subject));
 
         // PDP 호출 지연을 측정한다(p99는 application.yml의 히스토그램 설정으로 산출).
@@ -171,7 +171,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
      *   <li><b>source-ip</b>: 출발지 IP. 프록시가 있으면 {@code X-Forwarded-For} 첫 홉, 없으면 소켓 원격주소.
      *       PIP가 직전 관측과 비교해 IP 변화를 가중하고, 캐시 키에도 반영돼 <b>새 IP는 자동 미스</b>가 된다.</li>
      *   <li><b>requests-in-window</b>: 이 주체의 슬라이딩 윈도우 요청 수(레이트 급증 신호). 매 요청 달라지는
-     *       휘발성 값이라 캐시 키에선 제외한다({@link com.ztg.gateway.cache.DecisionCache} 결정 #3) — 급증은 epoch 무효화(step 4)로 처리.</li>
+     *       휘발성 값이라 캐시 키에선 제외한다({@link com.ztg.gateway.cache.DecisionCache} 키 설계 참조) — 급증은 epoch 능동 무효화로 처리.</li>
      *   <li><b>hour-of-day</b>: 요청 시각의 시(업무시간 외 신호). 주입 시계로 산출해 테스트에서 고정 가능.</li>
      * </ul>
      *

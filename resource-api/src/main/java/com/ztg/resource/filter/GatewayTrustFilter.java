@@ -13,7 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * 게이트웨이(PEP) 경유를 강제하는 필터 — Phase 2의 "우회 직접호출 차단".
+ * 게이트웨이(PEP) 경유를 강제하는 필터 — 우회 직접호출 차단.
  *
  * <p>resource-api는 게이트웨이가 주입한 내부 신뢰 헤더({@code X-Gateway-Auth})가
  * 약속된 공유 비밀과 일치할 때만 요청을 받아들인다. 헤더가 없거나 값이 틀리면
@@ -25,7 +25,7 @@ import jakarta.servlet.http.HttpServletResponse;
  *       여전히 토큰을 스스로 검증하고({@link com.ztg.resource.config.SecurityConfig}), 그 <i>앞단</i>에서 "PEP를
  *       거쳤는가"를 추가로 확인한다. 두 관문을 모두 통과해야 한다.</li>
  *   <li><b>정적 공유 비밀의 한계</b>: 비밀을 아는 주체만 헤더를 위조할 수 있다는 전제다.
- *       데모용 단순화이며, Phase 6에서 mTLS(상호 TLS)로 출처를 암호학적으로 증명해 대체한다.</li>
+ *       데모용 단순화이며, mtls 프로파일에선 mTLS(상호 TLS)가 출처를 암호학적으로 증명해 대체한다.</li>
  *   <li><b>타이밍 안전 비교</b>: 비밀 비교는 {@link MessageDigest#isEqual}로 상수시간 비교한다.</li>
  *   <li><b>fail-close</b>: 비밀이 비어 있게 설정되면 모든 요청을 막는다(열어두지 않는다).</li>
  * </ul>

@@ -5,9 +5,9 @@ import java.util.List;
 /**
  * PDP → PEP 판단 응답.
  *
- * <p>D1(위험적응)부터 결정에 <b>위험 내역</b>과 <b>epoch</b>를 함께 싣는다. {@code score}/{@code factors}는
+ * <p>위험적응 인가를 위해 결정에 <b>위험 내역</b>과 <b>epoch</b>를 함께 싣는다. {@code score}/{@code factors}는
  * "왜 이 결정인지"를 설명하고, {@code epoch}는 능동 캐시 무효화 토큰이다: 게이트웨이는 이 값을 학습해
- * 위험 변화(epoch bump) 시 옛 캐시를 버린다(README 결정 #1, 키 반영은 step 4).
+ * 캐시 키에 반영하므로, 위험 변화(epoch bump) 시 옛 캐시가 키-아웃된다.
  *
  * @param decision ALLOW/DENY
  * @param reason   사람이 읽을 수 있는 사유(감사/디버깅용). PEP가 DENY 시 응답 헤더로 노출한다.

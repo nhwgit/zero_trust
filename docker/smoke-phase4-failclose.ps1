@@ -1,4 +1,4 @@
-﻿# Phase 4 Step 3 스모크 — PDP 장애 재현 + fail-close 관측 (Windows/PowerShell)
+﻿# fail-close 스모크 — PDP 장애 재현 + fail-close 관측 (Windows/PowerShell)
 #
 # 완료 기준 검증: PDP가 죽으면 게이트웨이가 의도된 fail-close(403)로 막고,
 #   그 사실이 지표(ztg_authz_decisions_total{decision=deny,cause=pdp_error})와

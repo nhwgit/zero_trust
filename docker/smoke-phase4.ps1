@@ -1,4 +1,4 @@
-﻿# Phase 4 Step 2 스모크 — 관측 스택 기동 + Prometheus 4개 타깃 UP 확인
+﻿# 관측 스택 스모크 — Prometheus/Grafana 기동 + 4개 타깃 UP 확인
 #
 # 전제: 스크랩 대상 JVM(gateway:8080/resource-api:8082/pip:8083/pdp:8084)이
 #       Windows 호스트에서 bootRun 중이어야 해당 타깃이 UP으로 잡힌다.

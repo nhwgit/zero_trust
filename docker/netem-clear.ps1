@@ -1,4 +1,4 @@
-﻿# L4 장애 해제 (D2 실습2 — tc netem). netem-inject.ps1로 건 qdisc를 떼어 정상 상태로 되돌린다.
+﻿# L4 장애 해제 (tc netem). netem-inject.ps1로 건 qdisc를 떼어 정상 상태로 되돌린다.
 #
 # 사용:
 #   .\docker\netem-clear.ps1                  # 기본: ztg-pip eth0 의 root qdisc 제거

@@ -12,7 +12,7 @@ spring:
           # 발급하므로 동일하게 맞춘다. JWKS는 이 issuer의 .well-known에서 자동 조회.
           issuer-uri: ${KC_ISSUER_URI:http://localhost:8081/realms/ztg}
 
-# 분산 추적(Phase 4 Step 3): 모든 로그 라인에 요청 추적 ID([requestId])를 찍어
+# 분산 추적: 모든 로그 라인에 요청 추적 ID([requestId])를 찍어
 # 게이트웨이가 전파한 X-Request-Id로 백엔드 로그까지 상관한다. RequestIdFilter가 MDC를 채운다.
 logging:
   pattern:
@@ -24,7 +24,7 @@ ztg:
     # 이 값이 없는 직접 호출은 GatewayTrustFilter가 403으로 막는다.
     trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}
 
-# 관측(Phase 4): Prometheus가 /actuator/prometheus를 스크랩한다.
+# 관측: Prometheus가 /actuator/prometheus를 스크랩한다.
 # 데모: 관측 엔드포인트는 인증/신뢰헤더 없이 접근 허용(SecurityConfig·GatewayTrustFilter에서 예외).
 management:
   endpoints:

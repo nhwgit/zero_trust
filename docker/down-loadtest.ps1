@@ -1,4 +1,4 @@
-﻿# Phase 5 Step 3 — 부하테스트 스택 종료(핫패스 JVM 4개만)
+﻿# 부하테스트 스택 종료(핫패스 JVM 4개만)
 #
 # up-loadtest.ps1로 띄운 bootRun JVM(8080/8082/8083/8084)을 포트로 찾아 종료한다.
 # Keycloak(WSL docker)은 다른 스모크에도 쓰이므로 건드리지 않는다.

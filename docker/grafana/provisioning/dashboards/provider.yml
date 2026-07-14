@@ -1,4 +1,4 @@
-# Grafana 대시보드 자동 프로비저닝 (Phase 4 Step 2)
+# Grafana 대시보드 자동 프로비저닝
 # /var/lib/grafana/dashboards 에 마운트된 JSON을 기동 시 자동 등록한다.
 apiVersion: 1
 

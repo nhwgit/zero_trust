@@ -1,9 +1,9 @@
-# 서비스간 mTLS 패킷 캡처 (D2). pdp 컨테이너의 네트워크 네임스페이스에 tcpdump 사이드카를 붙여
+# 서비스간 mTLS 패킷 캡처. pdp 컨테이너의 네트워크 네임스페이스에 tcpdump 사이드카를 붙여
 # 들어오는(gateway→pdp:8084) + 나가는(pdp→pip:8083) mTLS 트래픽을 한 번에 잡는다.
 #
 # 전제: .\docker\up-mtls-docker.ps1 로 컨테이너 스택이 떠 있어야 한다.
 # 흐름: 이 스크립트로 캡처 시작(N초) → 그 사이 다른 창에서 .\docker\smoke-mtls.ps1 로 트리거 → 자동 종료.
-# 산출물: docs/packet-study/mtls.pcap  (Wireshark/tshark로 분석 — D2의 핵심은 사용자가 직접 와이어를 보는 것)
+# 산출물: docs/packet-study/mtls.pcap  (Wireshark/tshark로 분석 — 핵심은 사용자가 직접 와이어를 보는 것)
 #
 # 사용: .\docker\capture-mtls.ps1 [-Seconds 25] [-OutFile mtls.pcap]
 param(

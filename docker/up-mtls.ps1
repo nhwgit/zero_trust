@@ -1,4 +1,4 @@
-# 서비스간 mTLS 라이브 스택 기동 (Phase 6-A)
+# 서비스간 mTLS 라이브 스택 기동
 #
 # up-loadtest.ps1과 동일 구조(핫패스 JVM 4개 = Windows bootRun, Keycloak = WSL docker)에
 # mtls 프로파일을 입혀 gateway↔pdp↔pip 내부 호출을 상호 TLS로 잠근다.

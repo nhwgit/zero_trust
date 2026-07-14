@@ -1,4 +1,4 @@
-# 서비스간 mTLS 스모크 (Phase 6-A) — up-mtls.ps1로 스택을 먼저 띄운 뒤 실행.
+# 서비스간 mTLS 스모크 — up-mtls.ps1로 스택을 먼저 띄운 뒤 실행.
 #
 # 입증 목표:
 #   1) 정상 경로: 토큰으로 /api/hello → 200. gateway→pdp(mTLS)→pip(mTLS) 체인이 상호 TLS로 성립함.

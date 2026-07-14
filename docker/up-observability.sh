@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 4 Step 2 — 관측 스택(Prometheus/Grafana) 기동 (WSL 내부 실행)
+# 관측 스택(Prometheus/Grafana) 기동 (WSL 내부 실행)
 #
 # WSL→Windows 게이트웨이 IP를 발견해 WINDOWS_HOST_IP로 export 후 compose up.
 # Prometheus가 이 IP를 통해 Windows 호스트의 JVM /actuator/prometheus를 스크랩한다.

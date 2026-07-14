@@ -66,7 +66,7 @@ public class RiskEngine {
     }
 
     /**
-     * 위험을 평가한다 — L4 플래그 포함 버전(D3).
+     * 위험을 평가한다 — L4 플래그 포함 버전.
      *
      * @param l4Flag 이 요청의 출발지 IP에 걸린 커널(XDP) L4 레이트 플래그({@code null}=없음/만료 → 무가중)
      */

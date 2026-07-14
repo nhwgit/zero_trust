@@ -1,4 +1,4 @@
-﻿# Phase 2 스모크 — Gateway(PEP) 경유 강제 검증 (Windows/PowerShell)
+﻿# Gateway(PEP) 경유 강제 스모크 (Windows/PowerShell)
 # 전제: Keycloak(8081) + gateway(8080) + resource-api(8082)가 모두 떠 있어야 한다.
 #   Keycloak:     wsl bash docker/kc-hold.sh
 #   resource-api: .\gradlew.bat :resource-api:bootRun

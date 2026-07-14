@@ -1,4 +1,4 @@
-﻿# L4 장애 주입 (D2 실습2 — tc netem). 대상 컨테이너의 netns에 합류해 eth0에 인위적 지연/지터/손실을 건다.
+﻿# L4 장애 주입 (tc netem). 대상 컨테이너의 netns에 합류해 eth0에 인위적 지연/지터/손실을 건다.
 #
 # 왜 이렇게: 앱이 컨테이너라 tc를 호스트에서 못 건다 → 캡처와 같은 방식(--net container:<대상>)으로
 #   netshoot를 대상 netns에 합류시키고, qdisc를 바꿀 권한(--cap-add NET_ADMIN)만 더해 tc netem을 건다.

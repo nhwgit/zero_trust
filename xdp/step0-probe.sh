@@ -1,5 +1,5 @@
 #!/bin/bash
-# D3 Step 0: WSL2 XDP 툴체인/커널 프로브 (root로 실행 가정)
+# Step 0: WSL2 XDP 툴체인/커널 프로브 (root로 실행 가정)
 OUT=/mnt/c/Users/USER/Desktop/nhw/project/keycloak/xdp/out/step0-probe.out
 mkdir -p "$(dirname "$OUT")"
 exec > "$OUT" 2>&1

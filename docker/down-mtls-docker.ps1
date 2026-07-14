@@ -1,4 +1,4 @@
-# D2 컨테이너 스택 종료 — 앱 4개만 내린다(Keycloak은 다른 스모크에도 쓰이므로 유지).
+# mTLS 컨테이너 스택 종료 — 앱 4개만 내린다(Keycloak은 다른 스모크에도 쓰이므로 유지).
 #   전체 정리(Keycloak 포함)는: wsl -d Ubuntu-24.04 -- bash -c "cd .../docker && docker compose -f docker-compose.yml -f compose-apps.yml down"
 $ErrorActionPreference = 'Stop'
 

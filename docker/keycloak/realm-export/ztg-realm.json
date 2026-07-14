@@ -15,7 +15,7 @@
     {
       "clientId": "ztg-api",
       "name": "Zero Trust Gateway API Client",
-      "description": "Resource Server / 게이트웨이가 검증할 토큰의 audience. Phase 0 curl 테스트용 Direct Access Grant 허용.",
+      "description": "Resource Server / 게이트웨이가 검증할 토큰의 audience. curl 테스트용 Direct Access Grant 허용.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,

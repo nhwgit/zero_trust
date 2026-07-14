@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 1 스모크용 — Keycloak을 띄우고 WSL 세션을 살려둔다(컨테이너 유지).
+# 스모크용 — Keycloak을 띄우고 WSL 세션을 살려둔다(컨테이너 유지).
 # host에서 localhost:8081로 접근 가능. 종료는 docker compose down으로.
 set -uo pipefail
 cd "$(dirname "$0")"

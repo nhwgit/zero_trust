@@ -11,14 +11,14 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * 요청 밖(out-of-band) 위험 신호의 수신 표면(D3 Step 2). 평가 질의({@code /pip/assess}, PDP가 호출)와
+ * 요청 밖(out-of-band) 위험 신호의 수신 표면. 평가 질의({@code /pip/assess}, PDP가 호출)와
  * 달리, 커널(XDP) 에이전트가 <b>능동적으로 밀어 넣는</b> 신호를 받는다 — 신호 타입 {@code rate.l4}.
  *
  * <p>임계 판정은 에이전트 몫이다: 에이전트가 커널 map을 폴링해 윈도우 레이트를 계산하고, 임계를 넘었을
  * 때만 POST한다(PIP는 mTLS로 잠긴 데이터 포트라 발신자를 신뢰 — 관측치는 근거로만 싣는다).
  * PIP는 받은 IP를 hold 동안 플래그하고 해당 주체를 재평가한다(→ epoch bump → 능동 무효화).
  *
- * <p><b>enforcement 지시(D3 Step 3):</b> ack에 "이 IP를 hold와 같은 TTL 동안 에지(커널)에서
+ * <p><b>enforcement 지시:</b> ack에 "이 IP를 hold와 같은 TTL 동안 에지(커널)에서
  * 차단하라"는 지시를 실어 보낸다 — 판단은 PIP, 집행은 에이전트→XDP deny map. TTL을 hold와
  * 동기화하는 이유: 세션 무효화(주체 축)와 에지 차단(IP 축)의 가역성 창을 하나로 유지해,
  * 위험이 걷히면 두 축이 같은 시점에 함께 풀린다(영구 차단 아닌 위험적응).

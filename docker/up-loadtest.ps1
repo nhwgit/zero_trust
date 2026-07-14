@@ -1,7 +1,7 @@
-﻿# Phase 5 Step 3 — 부하테스트 라이브 스택 기동 (측정 신뢰성 통제 내장)
+﻿# 부하테스트 라이브 스택 기동 (측정 신뢰성 통제 내장)
 #
 # 핫패스 JVM 4개는 Windows에서 bootRun(각 별도 창), Keycloak은 WSL docker.
-# 측정 신뢰성 통제(왜는 phase-5 설계메모 "Step 3"):
+# 측정 신뢰성 통제:
 #   · 모든 JVM에 LOGGING_LEVEL_COM_ZTG=WARN 주입 → 요청당 INFO 로그 I/O가 지연을 지배하지 않게.
 #   · PDP는 BUSINESS_HOUR 0~24 → 업무시간 조건으로 /api 경로가 DENY로 새지 않게(측정은 /api/hello).
 #

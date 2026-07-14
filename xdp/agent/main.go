@@ -1,4 +1,4 @@
-// D3 Step 2/3 — XDP 사이드카: 커널 map(src_ip_stats)을 주기 폴링해 소스 IP별 SYN 윈도우 레이트를
+// XDP 사이드카: 커널 map(src_ip_stats)을 주기 폴링해 소스 IP별 SYN 윈도우 레이트를
 // 계산하고, 임계 초과 시 PIP에 rate.l4 신호를 POST한다(Step 2). -enforce가 켜져 있으면 PIP ack에
 // 실려 온 enforcement 지시(deny+TTL)를 커널 deny map(rate_enforce.c)에 기록해 스택 진입 전
 // 드랍으로 잇고, 만료된 엔트리를 걷어내며 드랍 수를 보고한다(Step 3).
@@ -7,7 +7,7 @@
 //   - 커널(XDP): 센다(per-IP 누적 pkts/syns) + deny map에 적힌 결정을 집행한다(TTL 내 드랍). 판단 없음.
 //   - 에이전트(여기): 윈도우 차분으로 레이트를 만들고 "임계 초과" 판정, PIP 지시의 커널 번역(deny map 기록).
 //     PIP는 mTLS로 잠긴 데이터 포트라 발신자(에이전트)를 신뢰하고, 받은 IP를 hold 동안 플래그한다.
-//   - PIP: 판단 주체 — 주체 재평가(기존 D1 경로: rate-l4 가중 → epoch bump → 능동 무효화) +
+//   - PIP: 판단 주체 — 주체 재평가(기존 지속검증 경로: rate-l4 가중 → epoch bump → 능동 무효화) +
 //     에지 차단 지시(enforcement)를 ack로 반환. 즉 "판단(PIP) → 트래픽 제어(XDP)"의 결정권은 PIP에 있다.
 //
 // L7 레이트(게이트웨이 관측 rate.l7)와 신호 타입을 분리한다 — L4는 "연결 시도 수"라서

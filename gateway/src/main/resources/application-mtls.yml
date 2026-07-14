@@ -1,4 +1,4 @@
-# mtls 프로파일 — 서비스간 mTLS (Phase 6-A). 기본 프로파일(application.yml)은 평문 HTTP 그대로다.
+# mtls 프로파일 — 서비스간 mTLS. 기본 프로파일(application.yml)은 평문 HTTP 그대로다.
 # 활성: SPRING_PROFILES_ACTIVE=mtls (up-mtls.ps1이 주입). 단위/통합(e2e)테스트는 이 프로파일을 켜지 않는다.
 #
 # gateway는 외부 진입점(8080)은 평문 HTTP 그대로 두고(클라이언트/Keycloak 데모 호환),

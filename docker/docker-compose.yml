@@ -1,5 +1,5 @@
 # Zero Trust Access Gateway — 인프라 기동
-# Phase 0: Keycloak(IdP)만 먼저 띄운다. 이후 Phase에서 prometheus/grafana/redis 등을 추가한다.
+# 기본은 Keycloak(IdP). 관측 스택(prometheus/grafana)은 아래에 함께 정의한다.
 #
 # 기동:   docker compose -f docker/docker-compose.yml up -d
 # 중지:   docker compose -f docker/docker-compose.yml down
@@ -33,7 +33,7 @@ services:
       retries: 12
       start_period: 30s
 
-  # ── 관측 스택 (Phase 4 Step 2) ──────────────────────────────────────────────
+  # ── 관측 스택 (Prometheus/Grafana) ──────────────────────────────────────────
   # Prometheus는 WSL 컨테이너 안, 스크랩 대상 JVM은 Windows 호스트(bootRun)에 있다.
   # extra_hosts로 'windows-host'를 WSL→Windows 게이트웨이 IP로 매핑한다.
   # IP는 WSL 재시작마다 바뀌므로 WINDOWS_HOST_IP 환경변수로 주입한다(smoke-phase4.ps1이 자동 설정).

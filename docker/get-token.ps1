@@ -1,4 +1,4 @@
-# Phase 0 — Keycloak에서 access token을 발급(password grant)받아 claims를 디코딩해 출력 (Windows/PowerShell)
+# Keycloak에서 access token을 발급(password grant)받아 claims를 디코딩해 출력 (Windows/PowerShell)
 # 사용: ./get-token.ps1 [username] [password]
 #   예: ./get-token.ps1 alice alice123
 param(

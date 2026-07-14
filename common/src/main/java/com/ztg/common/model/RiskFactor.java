@@ -3,7 +3,7 @@ package com.ztg.common.model;
 /**
  * 위험 점수에 기여한 단일 신호. 점수를 "설명 가능"하게 만드는 단위다.
  *
- * <p>지속검증(D1)의 핵심은 차단 자체가 아니라 <b>왜 차단했는지</b>를 댈 수 있는 것이다.
+ * <p>지속검증의 핵심은 차단 자체가 아니라 <b>왜 차단했는지</b>를 댈 수 있는 것이다.
  * 각 {@code RiskFactor}는 "어떤 신호가({@code signal}) 몇 점({@code points}) 왜({@code detail})"를 담아
  * 로그/응답 reason으로 그대로 노출된다.
  *

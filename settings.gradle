@@ -1,5 +1,4 @@
 // Zero Trust Access Gateway — 멀티모듈 루트
-// gateway/pdp/pip/common 모듈은 각 Phase에서 추가한다.
 pluginManagement {
     repositories {
         gradlePluginPortal()

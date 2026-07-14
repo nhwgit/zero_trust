@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# D2 실습2 캡처 오케스트레이션 (단일 WSL 세션 = VM 안정). 호스트 k6가 mtls 8083에 안 닿는 문제를
+# L4 netem 캡처 오케스트레이션 (단일 WSL 세션 = VM 안정). 호스트 k6가 mtls 8083에 안 닿는 문제를
 # 피해 WSL 내부 curl 루프로 부하를 만든다. 체인은 ALLOW/DENY 무관하게 gw->pdp->pip(8083)을 타므로
 # netem L4 영향 캡처엔 충분하고, time_total로 p50/p90/p99도 산출한다.
 #   사용: bash _netem-run.sh <before|after> [캡처초=30] [요청수=180]
