@@ -1,18 +1,29 @@
 package com.ztg.pip.store;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongSupplier;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * 주체별 <b>지속(stateful)</b> 위험 맥락 — 직전 관측 IP + 능동 무효화 epoch + 직전 위험점수 + 직전 폭주 밴드.
+ * 주체별 <b>지속(stateful)</b> 위험 맥락 — 직전 관측 IP + IP 변화 hold + 능동 무효화 epoch + 직전 위험점수 + 직전 폭주 밴드.
  *
  * <p>IP 변화 신호는 "지금 IP가 직전과 다른가"라 직전 값을 기억해야 한다(휘발성 신호와 달리 상태가 필요).
  * 슬라이딩 윈도우 레이트는 모든 요청을 보는 게이트웨이가 관측하므로 여기 두지 않는다.
  * 폭주 <b>밴드</b>(rate-burst의 히스테리시스 판정 기준)도 "직전에 폭주였나"를 기억해야 하는 같은 부류의 상태다
  * — 레이트가 임계 경계에서 진동할 때 점수(→epoch)가 함께 출렁이지 않게 한다({@link com.ztg.pip.service.RiskEngine#burstBand}).
+ *
+ * <p><b>IP 변화 hold({@code ip-change-hold}):</b> 변화를 관측한 순간부터 hold 동안 "최근에 IP가 바뀐 주체"로
+ * 기억한다({@link #ipChangeHeld}). 비교 기준({@code lastSeenIp})은 관측마다 덮이므로, hold가 없으면 ip-change
+ * 가중이 <b>바뀐 그 한 번의 평가에만</b> 실리고 바로 다음 재평가(고위험 TTL ~1s)에서 빠진다 — 탈취 시나리오의
+ * DENY가 1초짜리 스파이크가 되어 재시도로 우회되고, fan-out을 놓친 노드는 그 상태를 아예 못 본다.
+ * hold는 신호를 시간 창으로 늘려 이를 막는다. 창이 지나면 자동 소멸(가역성 — {@link L4RateFlagStore}의
+ * rate-l4 hold와 같은 논리). 창 안에서 또 바뀌면 만료를 연장한다(회전 = 지속 신호).
  *
  * <p><b>epoch(능동 무효화 토큰):</b> 위험 점수가 직전과 달라지면 epoch를 +1 한다.
  * epoch는 결정에 piggyback돼 게이트웨이로 가고, 게이트웨이는 새 epoch를 학습해 옛 캐시를 버린다
@@ -20,16 +31,38 @@ import org.springframework.stereotype.Component;
  * 위험 변화가 ALLOW→DENY로 반영된다.
  *
  * <p>설계 메모: 점수 "변화"를 트리거로 삼아 PIP는 PDP의 임계값을 몰라도 된다(관심사 분리). 같은 점수
- * 반복은 bump하지 않아 안정 상태에선 캐시가 유지된다. {@link #evict}로 데모 리셋(첫 관측 취급).
+ * 반복은 bump하지 않아 안정 상태에선 캐시가 유지된다. {@link #evict}로 데모 리셋 — 단, <b>epoch는 보존</b>한다:
+ * 게이트웨이가 epoch를 단조(max)로만 학습하므로 여기서 0으로 되돌리면 게이트웨이는 계속 옛(더 큰) 세대로
+ * 조회하고 적재는 새(작은) 세대로 갈려 그 주체가 영구 캐시 미스가 된다. 세대 토큰은 뒤로 가지 않는다.
  * in-memory(단일 PIP) — 다중화는 Redis 등 외부 저장소 확장으로 미룬다.
  */
 @Component
 public class SubjectRiskState {
 
-    /** 주체별 위험 맥락 스냅샷(불변). {@code lastScore=null}=점수 미관측, {@code lastBurstBand=null}=밴드 미관측. */
-    private record State(String lastSeenIp, long epoch, Integer lastScore, Boolean lastBurstBand) {}
+    /**
+     * 주체별 위험 맥락 스냅샷(불변). {@code lastScore=null}=점수 미관측, {@code lastBurstBand=null}=밴드 미관측,
+     * {@code ipChangeHoldUntilNanos=null}=활성 hold 없음(변화 미관측 또는 만료 후 새 변화 없음).
+     */
+    private record State(String lastSeenIp, long epoch, Integer lastScore, Boolean lastBurstBand,
+                         Long ipChangeHoldUntilNanos) {}
 
     private final Map<String, State> states = new ConcurrentHashMap<>();
+    private final long ipChangeHoldNanos;
+    private final LongSupplier nanoClock;
+
+    @Autowired
+    public SubjectRiskState(@Value("${ztg.pip.risk.ip-change-hold:30s}") Duration ipChangeHold) {
+        this(ipChangeHold, System::nanoTime);
+    }
+
+    /**
+     * 테스트용 — 단조 시계를 주입해 hold 만료를 결정적으로 검증한다({@link L4RateFlagStore}와 같은 패턴).
+     * 평가 흐름 테스트(다른 패키지의 {@code AssessmentServiceTest})도 시계를 쥐어야 해서 public.
+     */
+    public SubjectRiskState(Duration ipChangeHold, LongSupplier nanoClock) {
+        this.ipChangeHoldNanos = ipChangeHold.toNanos();
+        this.nanoClock = nanoClock;
+    }
 
     /** 직전 관측 IP를 반환한다(없으면 {@code null} = 첫 관측 → IP 변화로 치지 않음). */
     public String lastSeenIp(String subject) {
@@ -37,14 +70,36 @@ public class SubjectRiskState {
         return s == null ? null : s.lastSeenIp();
     }
 
-    /** 이번 관측 IP를 기록한다(다음 요청의 IP 변화 비교 기준). null/blank는 무시(미상 IP는 기준을 덮지 않음). */
+    /**
+     * 이번 관측 IP를 기록한다(다음 요청의 IP 변화 비교 기준). null/blank는 무시(미상 IP는 기준을 덮지 않음).
+     * 직전 IP와 <b>다르면</b> 그 순간부터 hold를 시작(재변화는 연장)한다 — 비교 기준이 덮여도
+     * "최근에 바뀌었다"는 사실은 {@link #ipChangeHeld}로 hold 동안 살아남는다. 첫 관측은 변화가 아니다.
+     */
     public void recordIp(String subject, String sourceIp) {
         if (sourceIp == null || sourceIp.isBlank()) {
             return;
         }
-        states.compute(subject, (k, s) -> s == null
-                ? new State(sourceIp, 0L, null, null)
-                : new State(sourceIp, s.epoch(), s.lastScore(), s.lastBurstBand()));
+        states.compute(subject, (k, s) -> {
+            if (s == null) {
+                return new State(sourceIp, 0L, null, null, null);
+            }
+            // 양쪽 다 Long으로 박싱 — long/Long 혼합 삼항은 null 쪽을 언박싱해 NPE가 난다.
+            Long holdUntil = s.lastSeenIp() != null && !sourceIp.equals(s.lastSeenIp())
+                    ? Long.valueOf(nanoClock.getAsLong() + ipChangeHoldNanos)   // 변화 관측: hold 시작/연장
+                    : s.ipChangeHoldUntilNanos();                               // 동일 IP: 기존 hold 유지(시간 만료에 맡김)
+            return new State(sourceIp, s.epoch(), s.lastScore(), s.lastBurstBand(), holdUntil);
+        });
+    }
+
+    /**
+     * 이 주체의 IP 변화 hold가 아직 유효한가(= 최근 hold 창 안에 IP가 바뀐 적 있는가).
+     * (now - holdUntil) >= 0 이면 만료 — 차이로 비교해 nanoTime 래핑에도 안전하다. 만료 판정만 하고
+     * 엔트리는 지우지 않는다(주체당 상태 한 건이라 크기 문제가 없고, 다음 변화가 값을 덮는다).
+     */
+    public boolean ipChangeHeld(String subject) {
+        State s = states.get(subject);
+        Long holdUntil = s == null ? null : s.ipChangeHoldUntilNanos();
+        return holdUntil != null && nanoClock.getAsLong() - holdUntil < 0;
     }
 
     /** 주체의 현재 epoch(없으면 0). 캐시 키/검증용 조회. */
@@ -64,12 +119,14 @@ public class SubjectRiskState {
     public long recordScore(String subject, int score) {
         State updated = states.compute(subject, (k, s) -> {
             if (s == null) {
-                return new State(null, 0L, score, null);                                       // 첫 관측: 기준 설정, bump 없음
+                return new State(null, 0L, score, null, null);                                 // 첫 관측: 기준 설정, bump 없음
             }
             if (s.lastScore() == null || s.lastScore() == score) {
-                return new State(s.lastSeenIp(), s.epoch(), score, s.lastBurstBand());         // 변화 없음: epoch 유지
+                return new State(s.lastSeenIp(), s.epoch(), score, s.lastBurstBand(),
+                        s.ipChangeHoldUntilNanos());                                           // 변화 없음: epoch 유지
             }
-            return new State(s.lastSeenIp(), s.epoch() + 1, score, s.lastBurstBand());         // 위험 변화: 능동 무효화 bump
+            return new State(s.lastSeenIp(), s.epoch() + 1, score, s.lastBurstBand(),
+                    s.ipChangeHoldUntilNanos());                                               // 위험 변화: 능동 무효화 bump
         });
         return updated.epoch();
     }
@@ -83,8 +140,8 @@ public class SubjectRiskState {
     /** 이번 폭주 밴드를 기록한다(다음 평가의 히스테리시스 판정 기준). */
     public void recordBurstBand(String subject, boolean band) {
         states.compute(subject, (k, s) -> s == null
-                ? new State(null, 0L, null, band)
-                : new State(s.lastSeenIp(), s.epoch(), s.lastScore(), band));
+                ? new State(null, 0L, null, band, null)
+                : new State(s.lastSeenIp(), s.epoch(), s.lastScore(), band, s.ipChangeHoldUntilNanos()));
     }
 
     /**
@@ -102,8 +159,12 @@ public class SubjectRiskState {
                 .toList();
     }
 
-    /** 데모 리셋: 주체의 위험 상태를 비운다(다음 관측은 첫 관측으로 취급, epoch 0부터). */
+    /**
+     * 데모 리셋: 주체의 위험 맥락(직전 IP·IP 변화 hold·직전 점수·직전 밴드)을 비운다 — 다음 관측은 첫 관측으로
+     * 취급된다(변화 아님, bump 없음). 단 <b>epoch는 보존</b>한다: 게이트웨이의 epoch 학습이 단조(max)라 여기서
+     * 되돌리면 게이트웨이 조회(옛 큰 epoch)와 적재(새 작은 epoch)가 영구히 갈려 그 주체가 캐시 불능이 된다.
+     */
     public void evict(String subject) {
-        states.remove(subject);
+        states.computeIfPresent(subject, (k, s) -> new State(null, s.epoch(), null, null, null));
     }
 }

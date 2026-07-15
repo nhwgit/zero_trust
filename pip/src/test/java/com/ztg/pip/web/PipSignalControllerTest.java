@@ -25,7 +25,7 @@ class PipSignalControllerTest {
 
     private final EpochPublisher silent = (subject, epoch) -> {};
     private final RiskEngine riskEngine = new RiskEngine(40, 30, 40, 40, 15, 60, 40, 9, 18);
-    private final SubjectRiskState state = new SubjectRiskState();
+    private final SubjectRiskState state = new SubjectRiskState(Duration.ofSeconds(30));
     private final L4RateFlagStore l4Flags = new L4RateFlagStore(Duration.ofSeconds(30));
     // 공개 생성자(실제 시계) 사용 — 이 테스트는 점수 산수가 아니라 ack 계약(enforcement)만 단언하므로 무해.
     private final AssessmentService service =

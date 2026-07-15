@@ -133,16 +133,48 @@ class RiskEngineTest {
     void held_burst_band_keeps_rate_burst_weight_and_explains_hysteresis() {
         // 폭주 중 레이트가 사이 구간(50)으로 내려와도 직전 밴드=폭주면 rate-burst 가중이 유지된다(같은 신호명·가중치).
         RiskAssessment held = engine().assess(alice(10), new RiskSignals("1.1.1.1", 50, 12), "1.1.1.1",
-                Boolean.TRUE, null);
+                false, Boolean.TRUE, null);
         assertThat(held.score()).isEqualTo(50);   // baseline 10 + rate-burst 40
         assertThat(held.factors()).extracting(RiskFactor::signal).contains("rate-burst");
         assertThat(held.explain()).contains("hold burst band");
 
         // 해제 임계 이하(30)로 내려오면 그때 가중이 빠진다 — 한 번의 점수 변화로 수렴.
         RiskAssessment exited = engine().assess(alice(10), new RiskSignals("1.1.1.1", 30, 12), "1.1.1.1",
-                Boolean.TRUE, null);
+                false, Boolean.TRUE, null);
         assertThat(exited.score()).isEqualTo(10);
         assertThat(exited.factors()).extracting(RiskFactor::signal).doesNotContain("rate-burst");
+    }
+
+    @Test
+    void held_ip_change_keeps_weight_after_baseline_caught_up() {
+        // hold 창 안: 비교 기준(lastSeenIp)이 이미 새 IP로 덮여 "지금은 변화 아님"이어도 ip-change 가중이 유지된다.
+        // 순간 신호였다면 바뀐 직후 재평가에서 바로 빠져 DENY가 1~수초 스파이크로 끝난다(재시도 우회).
+        RiskAssessment held = engine().assess(
+                alice(10), new RiskSignals("9.9.9.9", 5, 12), "9.9.9.9", true, null, null);
+
+        assertThat(held.score()).isEqualTo(40);   // baseline 10 + ip-change 30
+        assertThat(held.factors()).extracting(RiskFactor::signal).contains("ip-change");
+        assertThat(held.explain()).contains("within hold window");
+    }
+
+    @Test
+    void fresh_change_with_active_hold_counts_once() {
+        // hold 창 안에서 또 변화(회전)해도 같은 신호가 이중 가산되지 않는다 — 설명은 구체적인 쪽(변화 순간)을 쓴다.
+        RiskAssessment a = engine().assess(
+                alice(10), new RiskSignals("8.8.8.8", 5, 12), "9.9.9.9", true, null, null);
+
+        assertThat(a.score()).isEqualTo(40);      // +30 한 번만
+        assertThat(a.explain()).contains("9.9.9.9 -> 8.8.8.8");
+    }
+
+    @Test
+    void hold_expired_and_same_ip_drops_ip_change() {
+        // 창 경과 후(held=false) 같은 IP면 가중이 빠진다 — 한 번의 점수 하강으로 수렴(가역성).
+        RiskAssessment a = engine().assess(
+                alice(10), new RiskSignals("9.9.9.9", 5, 12), "9.9.9.9", false, null, null);
+
+        assertThat(a.score()).isEqualTo(10);
+        assertThat(a.factors()).extracting(RiskFactor::signal).doesNotContain("ip-change");
     }
 
     @Test
@@ -162,6 +194,7 @@ class RiskEngineTest {
                 new SubjectAttributes("alice", "finance", false, 10),
                 new RiskSignals("1.2.3.4", 5, 12),
                 "1.2.3.4",
+                false,
                 null,
                 new com.ztg.pip.store.L4RateFlagStore.Flag("1.2.3.4", 87, 5, Long.MAX_VALUE));
 

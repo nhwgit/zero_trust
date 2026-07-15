@@ -22,9 +22,10 @@ import com.ztg.common.model.SubjectAttributes;
  * PIP의 위험 평가 오케스트레이션 — 저장 속성 + 휘발성 신호 + 직전 IP를 모아 {@link RiskEngine}으로
  * 점수를 내고, 주체별 {@link SubjectRiskState}로 epoch를 갱신해 한 번에 {@link PipAssessment}로 묶는다.
  *
- * <p>순서가 의미를 가진다: ① 직전 IP·직전 폭주 밴드를 <b>먼저</b> 읽어 IP 변화·히스테리시스를 판정하고
- * 점수를 낸 뒤, ② 점수로 epoch를 갱신(변화 시 bump)하고, ③ 이번 IP·이번 밴드를 직전 값으로 덮는다
- * (다음 요청의 비교 기준). 점수 산출(순수)과 상태 갱신(부수효과)을 이 한 곳에 모아 컨트롤러는 얇게 유지한다.
+ * <p>순서가 의미를 가진다: ① 직전 IP·IP 변화 hold·직전 폭주 밴드를 <b>먼저</b> 읽어 IP 변화·히스테리시스를
+ * 판정하고 점수를 낸 뒤, ② 점수로 epoch를 갱신(변화 시 bump)하고, ③ 이번 IP·이번 밴드를 직전 값으로 덮는다
+ * (다음 요청의 비교 기준 — IP가 바뀌었으면 이때 hold가 시작된다). 점수 산출(순수)과 상태 갱신(부수효과)을
+ * 이 한 곳에 모아 컨트롤러는 얇게 유지한다.
  *
  * <p><b>fan-out(다중 GW):</b> epoch가 실제로 <b>올랐을 때만</b> {@link EpochPublisher}로 전파한다 —
  * 변화 순간을 권위자(PIP)가 알리므로, 위험을 유발하지 않은 게이트웨이도 자기 PDP 왕복을 기다리지 않고
@@ -69,14 +70,15 @@ public class AssessmentService {
 
         SubjectAttributes attrs = store.get(subject);
         String lastSeenIp = state.lastSeenIp(subject);                 // ① 변화 판정 기준(덮기 전에 읽는다)
+        boolean ipChangeHeld = state.ipChangeHeld(subject);            // ① hold 창 내 변화 이력(신호 유지 기준)
         Boolean priorBand = state.lastBurstBand(subject);              // ① 히스테리시스 판정 기준(동일 원칙)
         // 이 요청의 출발지 IP에 커널 L4 플래그가 살아 있으면 위험 가중(만료면 null=무가중, fail-open).
         L4RateFlagStore.Flag l4Flag = l4Flags.activeFlag(effective.sourceIp());
-        RiskAssessment risk = riskEngine.assess(attrs, effective, lastSeenIp, priorBand, l4Flag);
+        RiskAssessment risk = riskEngine.assess(attrs, effective, lastSeenIp, ipChangeHeld, priorBand, l4Flag);
 
         long before = state.currentEpoch(subject);                     // bump 여부 판정 기준
         long epoch = state.recordScore(subject, risk.score());         // ② 점수 변화 시 epoch bump
-        state.recordIp(subject, effective.sourceIp());                 // ③ 다음 비교 기준 갱신
+        state.recordIp(subject, effective.sourceIp());                 // ③ 다음 비교 기준 갱신(변화면 hold 시작)
         // ③ 이번 밴드 기록 — 점수에 반영된 판정과 같은 순수 함수를 같은 입력으로 다시 불러 항상 일치한다.
         state.recordBurstBand(subject, riskEngine.burstBand(effective.requestsInWindow(), priorBand));
 

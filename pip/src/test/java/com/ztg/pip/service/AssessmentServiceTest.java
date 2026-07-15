@@ -33,7 +33,9 @@ class AssessmentServiceTest {
 
     /** RiskEngine은 @Value 기본값을 코드로 재현(미신뢰40/IP변화30/폭주40/L4폭주40/업무외15, 폭주 진입>60/해제≤40, 업무 9-18). */
     private final RiskEngine riskEngine = new RiskEngine(40, 30, 40, 40, 15, 60, 40, 9, 18);
-    private final SubjectRiskState state = new SubjectRiskState();
+    /** 가짜 단조 시계 — ip-change hold(30s)의 유지/만료를 결정적으로 검증한다. */
+    private long nowNanos = 0;
+    private final SubjectRiskState state = new SubjectRiskState(Duration.ofSeconds(30), () -> nowNanos);
     private final L4RateFlagStore l4Flags = new L4RateFlagStore(Duration.ofSeconds(30));
     /** 12시(업무시간 내)로 고정 — out-of-band 재평가의 off-hours 가중을 배제해 산수를 예측 가능하게. */
     private final Clock noon = Clock.fixed(Instant.parse("2026-07-11T12:00:00Z"), ZoneOffset.UTC);
@@ -116,6 +118,32 @@ class AssessmentServiceTest {
         assertThat(exited.risk().score()).isEqualTo(10);  // 해제 임계 이하: 그때 한 번 변화
         assertThat(exited.epoch()).isEqualTo(1L);
         assertThat(published).containsExactly(new Published("alice", 1L));
+    }
+
+    @Test
+    void ip_change_weight_holds_across_reassessments_then_decays_once() {
+        // 순간 신호의 약점 차단: IP 변화 직후의 재평가(비교 기준은 이미 새 IP)가 가중을 되돌리면
+        // 탈취 DENY가 고위험 TTL(~1s)짜리 스파이크가 되어 재시도로 우회된다. hold 창(30s) 동안
+        // 같은 신호명·가중치가 유지돼 점수가 안정(epoch 잡음 없음)되고, 창이 끝날 때 한 번만 하강한다.
+        PipAssessment first = service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
+        assertThat(first.risk().score()).isEqualTo(10);              // 기준 IP 고정
+
+        PipAssessment changed = service.assess("alice", new RiskSignals("9.9.9.9", 0, 12));
+        assertThat(changed.risk().score()).isEqualTo(40);            // +ip-change 30
+        assertThat(changed.epoch()).isEqualTo(1L);
+
+        nowNanos += Duration.ofSeconds(10).toNanos();
+        PipAssessment retried = service.assess("alice", new RiskSignals("9.9.9.9", 0, 12));
+        assertThat(retried.risk().score()).isEqualTo(40);            // 재시도에도 점수 유지(hold)
+        assertThat(retried.epoch()).isEqualTo(1L);                   // 점수 불변 → epoch 안정
+        assertThat(retried.risk().explain()).contains("within hold window");
+
+        nowNanos += Duration.ofSeconds(21).toNanos();                // 총 31s > hold 30s
+        PipAssessment recovered = service.assess("alice", new RiskSignals("9.9.9.9", 0, 12));
+        assertThat(recovered.risk().score()).isEqualTo(10);          // 창 경과: 자동 해제(가역성)
+        assertThat(recovered.epoch()).isEqualTo(2L);                 // 하강도 변화 → 한 번의 bump로 수렴
+
+        assertThat(published).containsExactly(new Published("alice", 1L), new Published("alice", 2L));
     }
 
     @Test

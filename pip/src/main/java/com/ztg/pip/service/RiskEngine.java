@@ -27,6 +27,11 @@ import com.ztg.pip.store.L4RateFlagStore;
  * 함께 출렁여 <b>매 진동이 epoch bump → fan-out → 전 노드 캐시 무효화</b>로 증폭된다(계단 함수의 경계 진동).
  * 직전 밴드는 {@link com.ztg.pip.store.SubjectRiskState}가 기억하고 여기엔 비교 기준으로만 들어온다
  * — 직전 IP({@code lastSeenIp})와 같은 패턴으로, 엔진의 순수성(입력만으로 결정)은 유지된다.
+ *
+ * <p><b>ip-change는 hold 창으로 판정한다</b>: 변화 관측 순간뿐 아니라 hold({@code ip-change-hold}) 동안
+ * 가중을 유지한다({@code ipChangeHeld}). 순간 신호면 바뀐 그 평가 다음의 재평가에서 바로 빠져 — 탈취
+ * 시나리오의 DENY가 고위험 TTL(~1s)짜리 스파이크가 되어 재시도로 우회되고, 그 짧은 상태는 fan-out을 놓친
+ * 노드에 아예 닿지 않는다. hold 판정(시계 비교)은 {@code SubjectRiskState}가 하고 여기엔 결과만 들어온다.
  */
 @Component
 public class RiskEngine {
@@ -76,17 +81,19 @@ public class RiskEngine {
      * @return 점수 + 기여 신호 내역(설명 가능)
      */
     public RiskAssessment assess(SubjectAttributes base, RiskSignals signals, String lastSeenIp) {
-        return assess(base, signals, lastSeenIp, null, null);
+        return assess(base, signals, lastSeenIp, false, null, null);
     }
 
     /**
-     * 위험을 평가한다 — 직전 폭주 밴드·L4 플래그 포함 버전.
+     * 위험을 평가한다 — IP 변화 hold·직전 폭주 밴드·L4 플래그 포함 버전.
      *
+     * @param ipChangeHeld   이 주체의 IP 변화 hold가 유효한가(= hold 창 안에 IP가 바뀐 적 있음).
+     *                       비교 기준({@code lastSeenIp})이 갱신된 뒤에도 ip-change 가중을 창 동안 유지한다.
      * @param priorBurstBand 이 주체의 직전 폭주 밴드({@code null}=첫 관측). rate-burst 히스테리시스 판정에만 쓴다.
      * @param l4Flag         이 요청의 출발지 IP에 걸린 커널(XDP) L4 레이트 플래그({@code null}=없음/만료 → 무가중)
      */
     public RiskAssessment assess(SubjectAttributes base, RiskSignals signals, String lastSeenIp,
-                                 Boolean priorBurstBand, L4RateFlagStore.Flag l4Flag) {
+                                 boolean ipChangeHeld, Boolean priorBurstBand, L4RateFlagStore.Flag l4Flag) {
         List<RiskFactor> factors = new ArrayList<>();
         int score = 0;
 
@@ -106,10 +113,15 @@ public class RiskEngine {
         }
 
         // 2) IP 변화: 직전 관측과 다른 출발지 = 이동/탈취 신호. 첫 관측(lastSeenIp=null)은 변화로 보지 않는다.
+        //    변화 순간이 지나도 hold 창 동안 같은 신호명·가중치로 유지된다(ipChangeHeld) — 점수가 창 안에서
+        //    안정되어 epoch가 출렁이지 않고, 창이 끝날 때 한 번만 하강한다(rate-burst 히스테리시스와 같은 원리).
         String currentIp = signals == null ? null : signals.sourceIp();
-        if (currentIp != null && lastSeenIp != null && !currentIp.equals(lastSeenIp)) {
-            factors.add(new RiskFactor("ip-change", ipChangeWeight,
-                    "source ip changed %s -> %s".formatted(lastSeenIp, currentIp)));
+        boolean changedNow = currentIp != null && lastSeenIp != null && !currentIp.equals(lastSeenIp);
+        if (changedNow || ipChangeHeld) {
+            String reason = changedNow
+                    ? "source ip changed %s -> %s".formatted(lastSeenIp, currentIp)
+                    : "source ip changed recently (within hold window)";
+            factors.add(new RiskFactor("ip-change", ipChangeWeight, reason));
             score += ipChangeWeight;
         }
 

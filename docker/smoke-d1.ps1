@@ -63,7 +63,11 @@ $alice = Token "alice" "alice123"
 
 Write-Host "`n== 0) baseline: alice = finance / 미신뢰 디바이스 (score 50, ALLOW 경계 아래) ==" -ForegroundColor Cyan
 SetAttr "alice" "finance" $false 10
-# warm-up: home IP를 직전 관측으로 고정한다(재실행 시 남은 lastSeenIp 때문에 첫 요청이 ip-change로 오탐되는 것 방지).
+# 리셋: 이전 실행이 남긴 위험 맥락(lastSeenIp·ip-change hold)을 비운다(재실행 결정성). ip-change가 hold(기본 30s)로
+# 유지되면서 warm-up만으론 부족해졌다 — warm-up 자체가 ip-change를 밟으면 +30이 창 동안 남아 baseline 체크가 깨진다.
+# epoch는 보존되므로(게이트웨이 단조 학습과의 정합) 캐시 동작에는 영향이 없다.
+Invoke-RestMethod -Method Delete -Uri "$PIP/pip/risk/alice" | Out-Null
+# warm-up: home IP를 직전 관측으로 고정한다(리셋 직후 첫 관측 = 변화 아님).
 CodeFrom "$GW/api/hello" $alice $HomeIp | Out-Null
 Check "정상 alice /api/hello (home IP, 저레이트) -> 200 ALLOW" (CodeFrom "$GW/api/hello" $alice $HomeIp) 200
 
@@ -80,8 +84,14 @@ Start-Sleep -Seconds 12
 Check "쿨다운 후 alice /api/hello (home IP) -> 200 ALLOW (복귀)" (CodeFrom "$GW/api/hello" $alice $HomeIp) 200
 
 Write-Host "`n== 3) (부가) 낯선 IP에서의 요청 = 즉시 재평가 (캐시 키에 IP 포함 -> 자동 미스) ==" -ForegroundColor Cyan
-Write-Host "   새 IP는 ip-change(+30)를 만들어 50->80(>=80) -> 그 hijack 시도 자체가 DENY된다(단발 전이 신호)." -ForegroundColor DarkGray
+Write-Host "   새 IP는 ip-change(+30)를 만들어 50->80(>=80) -> 그 hijack 시도 자체가 DENY된다." -ForegroundColor DarkGray
 Check "낯선 IP alice /api/hello (NEW IP) -> 403 DENY (재로그인 없이)" (CodeFrom "$GW/api/hello" $alice $NewIp) 403
+
+Write-Host "`n== 4) 재시도 우회 차단: 캐시(고위험 TTL 1s) 만료 후 재시도해도 hold(30s) 동안 DENY 유지 ==" -ForegroundColor Cyan
+Write-Host "   hold가 없으면 비교 기준(lastSeenIp)이 새 IP로 덮여 재평가에서 +30이 빠진다 -> 탈취범은 2초 뒤" -ForegroundColor DarkGray
+Write-Host "   재시도만 하면 통과했다. hold가 신호를 창으로 늘려 재시도도 같은 DENY를 받는다." -ForegroundColor DarkGray
+Start-Sleep -Seconds 2
+Check "낯선 IP 재시도 alice /api/hello (NEW IP, 재평가) -> 403 DENY (hold 유지)" (CodeFrom "$GW/api/hello" $alice $NewIp) 403
 
 Write-Host "`n== 결과: $pass PASS / $fail FAIL ==" -ForegroundColor Cyan
 if ($fail -gt 0) { exit 1 }

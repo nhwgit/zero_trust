@@ -68,13 +68,16 @@ function Check([string]$name, [int]$got, [int]$want) {
 Write-Host "== 토큰 발급 (이후 한 번도 재발급하지 않는다 = 재로그인 없음) ==" -ForegroundColor Cyan
 $alice = Token "alice" "alice123"
 SetAttr "alice" "finance" $false 10   # 미신뢰 디바이스 → home 50(ALLOW) / 새 IP 80(DENY)
+# 리셋: 이전 실행이 남긴 위험 맥락(lastSeenIp·ip-change hold 30s)을 비운다(재실행 결정성). epoch는 보존돼
+# 게이트웨이 단조 학습과 정합 — 리셋 후 첫 평가는 "첫 관측"이라 점수 50이 결정적으로 나온다.
+Invoke-RestMethod -Method Delete -Uri "$PIP/pip/risk/alice" | Out-Null
 
-Write-Host "`n== 0) 두 게이트웨이 모두 home IP로 워밍업 → 각자 ALLOW@epoch0를 캐시 ==" -ForegroundColor Cyan
-# GW1 첫 요청: lastSeenIp=null이라 ip-change 없음 → score 50 → ALLOW, PIP가 lastSeenIp=home으로 고정.
+Write-Host "`n== 0) 두 게이트웨이 모두 home IP로 워밍업 → 각자 ALLOW를 캐시 ==" -ForegroundColor Cyan
+# GW1 첫 요청: lastSeenIp=null(리셋 직후)이라 ip-change 없음 → score 50 → ALLOW, PIP가 lastSeenIp=home으로 고정.
 CodeFrom "$GW1/api/hello" $alice $HomeIp | Out-Null
 Check "GW1 alice /api/hello (home IP) -> 200 ALLOW" (CodeFrom "$GW1/api/hello" $alice $HomeIp) 200
 # GW2도 home으로 캐시를 채운다(별도 인스턴스라 캐시는 독립). PIP는 home==lastSeenIp라 점수/epoch 불변.
-Check "GW2 alice /api/hello (home IP) -> 200 ALLOW (GW2 캐시에 ALLOW@epoch0)" (CodeFrom "$GW2/api/hello" $alice $HomeIp) 200
+Check "GW2 alice /api/hello (home IP) -> 200 ALLOW (GW2 캐시에 ALLOW 적재)" (CodeFrom "$GW2/api/hello" $alice $HomeIp) 200
 
 Write-Host "`n== 1) GW1에서만 위험을 올린다: 새 IP → ip-change(+30) → score 80 → DENY → epoch bump ==" -ForegroundColor Cyan
 Write-Host "   이 평가에서 PIP가 epoch를 0→1로 올리고 Redis 채널로 (alice,1)을 publish한다. PIP lastSeenIp:=new." -ForegroundColor DarkGray
