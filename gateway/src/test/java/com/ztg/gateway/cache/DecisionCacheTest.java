@@ -23,13 +23,13 @@ import com.ztg.common.model.RiskSignals;
  */
 class DecisionCacheTest {
 
-    /** 기본 캐시: base TTL 60s, 고위험 TTL 1s(score≥50), 폭주 임계 60, 크기 100. 시계 미주입(실시간, 만료 안 걸림). */
+    /** 기본 캐시: base TTL 60s, 고위험 TTL 1s(score≥50), 폭주 진입>60/해제≤40, 크기 100. 시계 미주입(실시간, 만료 안 걸림). */
     private static DecisionCache cache(boolean enabled) {
         return cache(enabled, System::nanoTime);
     }
 
     private static DecisionCache cache(boolean enabled, LongSupplier nanoClock) {
-        return new DecisionCache(enabled, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 60, 100,
+        return new DecisionCache(enabled, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 60, 40, 100,
                 new SimpleMeterRegistry(), nanoClock);
     }
 
@@ -171,6 +171,27 @@ class DecisionCacheTest {
         // 폭주 지속(밴드 불변=폭주) → 전이 아님 → 적재된 결정이 히트한다(엣지 트리거).
         assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "120")).isAllowed())
                 .isFalse();
+    }
+
+    @Test
+    void oscillationAroundEnterThresholdDoesNotKeepBypassing() {
+        // 히스테리시스 확인: 폭주 진입(>60) 후 레이트가 진입 임계 경계에서 진동(55↔70)해도 사이 구간(40<r≤60)은
+        // 직전 밴드를 유지해 전이가 아니다 → 바이패스 없이 캐시가 동작한다. 단일 임계였다면 매 진동이 전이=바이패스.
+        DecisionCache cache = cache(true);
+        cache.put(requestWithCtx("alice", "/api/hello", "203.0.113.7", "1"), DecisionResponse.allow("ok"));
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "1")).isAllowed())
+                .isTrue();                                                                        // 기준: 정상 밴드
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "70"))).isNull(); // 진입: 전이 1회
+        cache.put(requestWithCtx("alice", "/api/hello", "203.0.113.7", "70"), DecisionResponse.deny("burst"));
+
+        // 사이 구간으로 내려와도(55≤60) 밴드 유지 → 전이 아님 → 히트. 다시 70으로 올라가도 마찬가지.
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "55")).isAllowed())
+                .isFalse();
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "70")).isAllowed())
+                .isFalse();
+
+        // 해제 임계(≤40)까지 내려와야 정상 밴드로 전이 → 그 한 요청만 강제 미스(재평가로 점수 하향을 반영할 기회).
+        assertThat(cache.getIfPresent(requestWithCtx("alice", "/api/hello", "203.0.113.7", "35"))).isNull();
     }
 
     @Test

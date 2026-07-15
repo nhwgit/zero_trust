@@ -42,13 +42,35 @@ class SubjectRiskStateTest {
     }
 
     @Test
+    void records_and_reads_last_burst_band() {
+        assertThat(state.lastBurstBand("alice")).isNull();          // 첫 관측 전(히스테리시스 기준 없음)
+        state.recordBurstBand("alice", true);
+        assertThat(state.lastBurstBand("alice")).isTrue();
+        state.recordBurstBand("alice", false);
+        assertThat(state.lastBurstBand("alice")).isFalse();
+    }
+
+    @Test
+    void burst_band_record_preserves_ip_epoch_and_score() {
+        state.recordIp("alice", "1.2.3.4");
+        state.recordScore("alice", 10);
+        state.recordScore("alice", 80);                              // bump → epoch 1
+        state.recordBurstBand("alice", true);
+        assertThat(state.lastSeenIp("alice")).isEqualTo("1.2.3.4");  // 다른 상태를 덮지 않는다
+        assertThat(state.currentEpoch("alice")).isEqualTo(1L);
+        assertThat(state.recordScore("alice", 80)).isEqualTo(1L);    // 점수 기준도 유지(동일 점수 → bump 없음)
+    }
+
+    @Test
     void evict_resets_epoch_and_ip() {
         state.recordScore("alice", 10);
         state.recordScore("alice", 80);
         state.recordIp("alice", "1.2.3.4");
+        state.recordBurstBand("alice", true);
         state.evict("alice");
         assertThat(state.currentEpoch("alice")).isZero();           // 첫 관측부터 다시
         assertThat(state.lastSeenIp("alice")).isNull();
+        assertThat(state.lastBurstBand("alice")).isNull();          // 밴드 기준도 리셋
     }
 
     @Test

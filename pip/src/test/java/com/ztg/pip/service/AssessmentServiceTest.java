@@ -31,8 +31,8 @@ class AssessmentServiceTest {
     private final List<Published> published = new ArrayList<>();
     private final EpochPublisher capturing = (subject, epoch) -> published.add(new Published(subject, epoch));
 
-    /** RiskEngine은 @Value 기본값을 코드로 재현(미신뢰40/IP변화30/폭주40/L4폭주40/업무외15, 폭주임계60, 업무 9-18). */
-    private final RiskEngine riskEngine = new RiskEngine(40, 30, 40, 40, 15, 60, 9, 18);
+    /** RiskEngine은 @Value 기본값을 코드로 재현(미신뢰40/IP변화30/폭주40/L4폭주40/업무외15, 폭주 진입>60/해제≤40, 업무 9-18). */
+    private final RiskEngine riskEngine = new RiskEngine(40, 30, 40, 40, 15, 60, 40, 9, 18);
     private final SubjectRiskState state = new SubjectRiskState();
     private final L4RateFlagStore l4Flags = new L4RateFlagStore(Duration.ofSeconds(30));
     /** 12시(업무시간 내)로 고정 — out-of-band 재평가의 off-hours 가중을 배제해 산수를 예측 가능하게. */
@@ -96,6 +96,26 @@ class AssessmentServiceTest {
 
         PipAssessment first = service.assess("alice", new RiskSignals("6.6.6.6", 0, 12));
         assertThat(first.risk().explain()).contains("rate-l4");
+    }
+
+    @Test
+    void rate_oscillation_inside_hysteresis_band_does_not_bump_epoch() {
+        // 경계 진동 시나리오: 진입(70>60) 후 레이트가 사이 구간(50)으로 진동해도 밴드가 유지돼
+        // 점수가 안 변하고 → epoch bump도 fan-out도 없다. 해제 임계(≤40)까지 내려와야 한 번만 변한다.
+        // 단일 임계였다면 50↔70 진동마다 점수가 ±40 출렁여 매번 epoch bump → 전 노드 캐시 무효화 폭풍.
+        PipAssessment enter = service.assess("alice", new RiskSignals("1.1.1.1", 70, 12));
+        assertThat(enter.risk().score()).isEqualTo(50);   // baseline 10 + rate-burst 40 (첫 관측: bump 없음)
+        assertThat(enter.epoch()).isZero();
+
+        PipAssessment held = service.assess("alice", new RiskSignals("1.1.1.1", 50, 12));
+        assertThat(held.risk().score()).isEqualTo(50);    // 사이 구간: 밴드 유지 → 점수 불변
+        assertThat(held.epoch()).isZero();                // epoch 안정
+        assertThat(published).isEmpty();                  // fan-out 침묵(무효화 폭풍 없음)
+
+        PipAssessment exited = service.assess("alice", new RiskSignals("1.1.1.1", 30, 12));
+        assertThat(exited.risk().score()).isEqualTo(10);  // 해제 임계 이하: 그때 한 번 변화
+        assertThat(exited.epoch()).isEqualTo(1L);
+        assertThat(published).containsExactly(new Published("alice", 1L));
     }
 
     @Test

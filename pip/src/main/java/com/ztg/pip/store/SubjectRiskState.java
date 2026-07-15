@@ -7,10 +7,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
 /**
- * 주체별 <b>지속(stateful)</b> 위험 맥락 — 직전 관측 IP + 능동 무효화 epoch + 직전 위험점수.
+ * 주체별 <b>지속(stateful)</b> 위험 맥락 — 직전 관측 IP + 능동 무효화 epoch + 직전 위험점수 + 직전 폭주 밴드.
  *
  * <p>IP 변화 신호는 "지금 IP가 직전과 다른가"라 직전 값을 기억해야 한다(휘발성 신호와 달리 상태가 필요).
  * 슬라이딩 윈도우 레이트는 모든 요청을 보는 게이트웨이가 관측하므로 여기 두지 않는다.
+ * 폭주 <b>밴드</b>(rate-burst의 히스테리시스 판정 기준)도 "직전에 폭주였나"를 기억해야 하는 같은 부류의 상태다
+ * — 레이트가 임계 경계에서 진동할 때 점수(→epoch)가 함께 출렁이지 않게 한다({@link com.ztg.pip.service.RiskEngine#burstBand}).
  *
  * <p><b>epoch(능동 무효화 토큰):</b> 위험 점수가 직전과 달라지면 epoch를 +1 한다.
  * epoch는 결정에 piggyback돼 게이트웨이로 가고, 게이트웨이는 새 epoch를 학습해 옛 캐시를 버린다
@@ -24,8 +26,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class SubjectRiskState {
 
-    /** 주체별 위험 맥락 스냅샷(불변). {@code lastScore=null}=점수 미관측. */
-    private record State(String lastSeenIp, long epoch, Integer lastScore) {}
+    /** 주체별 위험 맥락 스냅샷(불변). {@code lastScore=null}=점수 미관측, {@code lastBurstBand=null}=밴드 미관측. */
+    private record State(String lastSeenIp, long epoch, Integer lastScore, Boolean lastBurstBand) {}
 
     private final Map<String, State> states = new ConcurrentHashMap<>();
 
@@ -41,8 +43,8 @@ public class SubjectRiskState {
             return;
         }
         states.compute(subject, (k, s) -> s == null
-                ? new State(sourceIp, 0L, null)
-                : new State(sourceIp, s.epoch(), s.lastScore()));
+                ? new State(sourceIp, 0L, null, null)
+                : new State(sourceIp, s.epoch(), s.lastScore(), s.lastBurstBand()));
     }
 
     /** 주체의 현재 epoch(없으면 0). 캐시 키/검증용 조회. */
@@ -62,14 +64,27 @@ public class SubjectRiskState {
     public long recordScore(String subject, int score) {
         State updated = states.compute(subject, (k, s) -> {
             if (s == null) {
-                return new State(null, 0L, score);                       // 첫 관측: 기준 설정, bump 없음
+                return new State(null, 0L, score, null);                                       // 첫 관측: 기준 설정, bump 없음
             }
             if (s.lastScore() == null || s.lastScore() == score) {
-                return new State(s.lastSeenIp(), s.epoch(), score);      // 변화 없음: epoch 유지
+                return new State(s.lastSeenIp(), s.epoch(), score, s.lastBurstBand());         // 변화 없음: epoch 유지
             }
-            return new State(s.lastSeenIp(), s.epoch() + 1, score);      // 위험 변화: 능동 무효화 bump
+            return new State(s.lastSeenIp(), s.epoch() + 1, score, s.lastBurstBand());         // 위험 변화: 능동 무효화 bump
         });
         return updated.epoch();
+    }
+
+    /** 직전 폭주 밴드를 반환한다({@code null}=첫 관측 → 히스테리시스 유지 없이 진입 임계만 적용). */
+    public Boolean lastBurstBand(String subject) {
+        State s = states.get(subject);
+        return s == null ? null : s.lastBurstBand();
+    }
+
+    /** 이번 폭주 밴드를 기록한다(다음 평가의 히스테리시스 판정 기준). */
+    public void recordBurstBand(String subject, boolean band) {
+        states.compute(subject, (k, s) -> s == null
+                ? new State(null, 0L, null, band)
+                : new State(s.lastSeenIp(), s.epoch(), s.lastScore(), band));
     }
 
     /**

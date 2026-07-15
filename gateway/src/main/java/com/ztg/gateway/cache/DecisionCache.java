@@ -47,7 +47,10 @@ import com.ztg.common.model.RiskSignals;
  * 전이) 그 한 요청을 <b>강제 미스</b>로 만들어 PDP 재평가를 유발한다. 그 재평가가 폭주 신호를 PIP까지 실어
  * 보내 점수↑→epoch bump→옛 엔트리 키-아웃으로 이어진다 — <b>이것이 같은 IP 급증을 능동 무효화로 잇는 트리거</b>다.
  * <b>엣지 트리거</b>(밴드가 바뀐 순간만)라 폭주가 지속되는 동안엔 다시 캐시가 동작한다(레벨 트리거였다면 폭주
- * 내내 캐시가 죽어 부하 데모가 무너진다). 새 IP는 이 경로가 필요 없다 — 키에 IP가 남아 자동 미스→재평가다.
+ * 내내 캐시가 죽어 부하 데모가 무너진다). 밴드 판정은 <b>히스테리시스(이중 임계)</b>다 — 진입은
+ * {@code burst-threshold} 초과, 해제는 {@code burst-exit-threshold} 이하, 사이 구간은 직전 밴드 유지.
+ * 단일 임계면 레이트가 경계에서 진동할 때 매 진동이 전이로 판정돼 엣지 트리거가 사실상 레벨 트리거로
+ * 퇴화한다(바이패스 폭풍). 새 IP는 이 경로가 필요 없다 — 키에 IP가 남아 자동 미스→재평가다.
  *
  * <p><b>왜 직접 구현(외부 캐시 라이브러리 미사용):</b> 부하 데모의 캐시는 핫 키 소수에 대한 짧은 TTL이면
  * 충분하고, TTL·무효화·크기상한을 코드에 그대로 드러내 "캐싱의 효과와 위험"을 보이는 게 학습 목적에 맞다.
@@ -78,6 +81,7 @@ public class DecisionCache {
     private final long highRiskTtlNanos;
     private final int highRiskScore;
     private final int burstThreshold;
+    private final int burstExitThreshold;
     private final int maxSize;
     private final LongSupplier nanoClock;
     private final Counter hits;
@@ -91,19 +95,27 @@ public class DecisionCache {
                   @Value("${ztg.gateway.decision-cache.high-risk-ttl:1s}") Duration highRiskTtl,
                   @Value("${ztg.gateway.decision-cache.high-risk-score:50}") int highRiskScore,
                   @Value("${ztg.gateway.rate.burst-threshold:60}") int burstThreshold,
+                  @Value("${ztg.gateway.rate.burst-exit-threshold:40}") int burstExitThreshold,
                   @Value("${ztg.gateway.decision-cache.max-size:10000}") int maxSize,
                   MeterRegistry meterRegistry) {
-        this(enabled, ttl, highRiskTtl, highRiskScore, burstThreshold, maxSize, meterRegistry, System::nanoTime);
+        this(enabled, ttl, highRiskTtl, highRiskScore, burstThreshold, burstExitThreshold, maxSize,
+                meterRegistry, System::nanoTime);
     }
 
     /** 테스트용 — 단조 시계를 주입해 위험적응 TTL 만료를 결정적으로 검증한다. */
     DecisionCache(boolean enabled, Duration ttl, Duration highRiskTtl, int highRiskScore, int burstThreshold,
-                  int maxSize, MeterRegistry meterRegistry, LongSupplier nanoClock) {
+                  int burstExitThreshold, int maxSize, MeterRegistry meterRegistry, LongSupplier nanoClock) {
+        if (burstExitThreshold > burstThreshold) {
+            // 해제 임계가 진입 임계보다 높으면 히스테리시스가 뒤집힌다(진입 즉시 해제) — 기동 시 fail-fast.
+            throw new IllegalArgumentException("burst-exit-threshold(%d) must be <= burst-threshold(%d)"
+                    .formatted(burstExitThreshold, burstThreshold));
+        }
         this.enabled = enabled;
         this.ttlNanos = ttl.toNanos();
         this.highRiskTtlNanos = highRiskTtl.toNanos();
         this.highRiskScore = highRiskScore;
         this.burstThreshold = burstThreshold;
+        this.burstExitThreshold = burstExitThreshold;
         this.maxSize = maxSize;
         this.nanoClock = nanoClock;
         // 캐시 히트율을 보이는 RED 보조 지표(히트면 PDP 호출이 통째로 빠진다).
@@ -189,12 +201,18 @@ public class DecisionCache {
     }
 
     /**
-     * 이 주체의 레이트 밴드(폭주 여부 = {@code requests-in-window > burst-threshold})가 직전 관측 대비
-     * <b>전이</b>했는지 본다. 전이면 {@code true}(→ 호출부가 강제 미스 처리). 관측할 때마다 현재 밴드를 기록하고
-     * 직전 밴드를 회수해 비교하므로 <b>엣지 트리거</b>다 — 밴드가 유지되는 동안엔 전이가 아니라 캐시가 정상 동작한다.
+     * 이 주체의 레이트 밴드(폭주 여부)가 직전 관측 대비 <b>전이</b>했는지 본다. 전이면 {@code true}
+     * (→ 호출부가 강제 미스 처리). 관측할 때마다 현재 밴드를 기록하고 직전 밴드와 비교하므로
+     * <b>엣지 트리거</b>다 — 밴드가 유지되는 동안엔 전이가 아니라 캐시가 정상 동작한다.
      *
-     * <p>첫 관측(직전 밴드 없음)은 전이로 보지 않는다(기준만 세움). 레이트 신호가 없거나 숫자가 아니면 비교를
-     * 건너뛴다(부재는 트리거 아님). 레이트 자체는 캐시 키에서 제외돼 있어 이 비교만이 급증을 캐시에 알린다.
+     * <p>밴드 판정은 <b>히스테리시스(이중 임계)</b>: 진입은 {@code requests > burst-threshold}, 해제는
+     * {@code requests <= burst-exit-threshold}, 사이 구간은 직전 밴드 유지. 레이트가 진입 임계 경계에서
+     * 진동해도 매 진동이 전이(=바이패스)로 판정되지 않는다. PIP의 rate-burst 판정과 같은 이중 임계를 써,
+     * 여기서 전이로 판정한 재평가가 PIP에서도 같은 방향의 점수 변화로 이어진다(임계 정합).
+     *
+     * <p>첫 관측(직전 밴드 없음)은 전이로 보지 않는다(기준만 세움 — 진입 임계만 적용). 레이트 신호가 없거나
+     * 숫자가 아니면 비교를 건너뛴다(부재는 트리거 아님). 레이트 자체는 캐시 키에서 제외돼 있어 이 비교만이
+     * 급증을 캐시에 알린다.
      */
     private boolean rateBandChanged(DecisionRequest request) {
         Map<String, String> context = request.context();
@@ -205,13 +223,17 @@ public class DecisionCache {
         if (raw == null) {
             return false;
         }
-        boolean burst;
+        int requests;
         try {
-            burst = Integer.parseInt(raw.trim()) > burstThreshold;
+            requests = Integer.parseInt(raw.trim());
         } catch (NumberFormatException e) {
             return false;   // 해석 불가한 레이트는 트리거로 쓰지 않는다(보수적)
         }
-        Boolean prior = lastBand.put(request.subject(), burst);   // 기록하며 직전 밴드 회수(주체별)
+        Boolean prior = lastBand.get(request.subject());
+        // 히스테리시스: 진입 임계 초과면 폭주, 해제 임계 이하면 정상, 사이 구간은 직전 밴드 유지(첫 관측은 정상 취급).
+        boolean burst = requests > burstThreshold
+                || (Boolean.TRUE.equals(prior) && requests > burstExitThreshold);
+        lastBand.put(request.subject(), burst);                   // 다음 비교 기준 갱신(주체별)
         return prior != null && prior != burst;                   // 첫 관측은 전이 아님
     }
 

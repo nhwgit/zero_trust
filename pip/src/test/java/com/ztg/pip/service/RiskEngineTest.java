@@ -19,9 +19,9 @@ class RiskEngineTest {
 
     private static final int THRESHOLD = 80;
 
-    /** 기본 가중치로 엔진 생성(설정 디폴트와 동일). */
+    /** 기본 가중치로 엔진 생성(설정 디폴트와 동일 — 폭주 진입>60/해제≤40). */
     private RiskEngine engine() {
-        return new RiskEngine(40, 30, 40, 40, 15, 60, 9, 18);
+        return new RiskEngine(40, 30, 40, 40, 15, 60, 40, 9, 18);
     }
 
     /** finance/신뢰/baseline 지정 주체. */
@@ -111,11 +111,47 @@ class RiskEngineTest {
 
     @Test
     void burst_threshold_is_exclusive_boundary() {
-        // 경계: 정확히 임계(60)는 급증 아님, 61부터 급증.
+        // 경계: 직전 밴드 없음(첫 관측) 기준 — 정확히 진입 임계(60)는 급증 아님, 61부터 급증.
         assertThat(engine().assess(alice(0), new RiskSignals("1.1.1.1", 60, 12), "1.1.1.1").factors())
                 .extracting(RiskFactor::signal).doesNotContain("rate-burst");
         assertThat(engine().assess(alice(0), new RiskSignals("1.1.1.1", 61, 12), "1.1.1.1").factors())
                 .extracting(RiskFactor::signal).contains("rate-burst");
+    }
+
+    @Test
+    void burst_band_holds_between_thresholds_when_prior_band_was_burst() {
+        // 히스테리시스: 사이 구간(40 < r ≤ 60)은 직전 밴드를 따른다 — 진동해도 점수(→epoch)가 출렁이지 않는 근거.
+        RiskEngine e = engine();
+        assertThat(e.burstBand(50, Boolean.TRUE)).isTrue();     // 직전 폭주: 유지
+        assertThat(e.burstBand(50, Boolean.FALSE)).isFalse();   // 직전 정상: 진입 아님
+        assertThat(e.burstBand(50, null)).isFalse();            // 첫 관측: 진입 임계만 적용
+        assertThat(e.burstBand(40, Boolean.TRUE)).isFalse();    // 해제 임계(≤40) 도달: 해제
+        assertThat(e.burstBand(61, Boolean.FALSE)).isTrue();    // 진입 임계 초과: 무조건 진입
+    }
+
+    @Test
+    void held_burst_band_keeps_rate_burst_weight_and_explains_hysteresis() {
+        // 폭주 중 레이트가 사이 구간(50)으로 내려와도 직전 밴드=폭주면 rate-burst 가중이 유지된다(같은 신호명·가중치).
+        RiskAssessment held = engine().assess(alice(10), new RiskSignals("1.1.1.1", 50, 12), "1.1.1.1",
+                Boolean.TRUE, null);
+        assertThat(held.score()).isEqualTo(50);   // baseline 10 + rate-burst 40
+        assertThat(held.factors()).extracting(RiskFactor::signal).contains("rate-burst");
+        assertThat(held.explain()).contains("hold burst band");
+
+        // 해제 임계 이하(30)로 내려오면 그때 가중이 빠진다 — 한 번의 점수 변화로 수렴.
+        RiskAssessment exited = engine().assess(alice(10), new RiskSignals("1.1.1.1", 30, 12), "1.1.1.1",
+                Boolean.TRUE, null);
+        assertThat(exited.score()).isEqualTo(10);
+        assertThat(exited.factors()).extracting(RiskFactor::signal).doesNotContain("rate-burst");
+    }
+
+    @Test
+    void exit_threshold_above_enter_threshold_fails_fast() {
+        // 해제 임계 > 진입 임계는 히스테리시스가 뒤집힌 오설정 — 기동 시점에 즉시 실패해야 한다.
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> new RiskEngine(40, 30, 40, 40, 15, 60, 61, 9, 18))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("burst-exit-threshold");
     }
 
     @Test
@@ -126,6 +162,7 @@ class RiskEngineTest {
                 new SubjectAttributes("alice", "finance", false, 10),
                 new RiskSignals("1.2.3.4", 5, 12),
                 "1.2.3.4",
+                null,
                 new com.ztg.pip.store.L4RateFlagStore.Flag("1.2.3.4", 87, 5, Long.MAX_VALUE));
 
         assertThat(a.score()).isEqualTo(90);
