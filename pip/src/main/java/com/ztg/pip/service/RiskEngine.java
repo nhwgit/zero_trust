@@ -10,6 +10,7 @@ import com.ztg.common.model.RiskAssessment;
 import com.ztg.common.model.RiskFactor;
 import com.ztg.common.model.RiskSignals;
 import com.ztg.common.model.SubjectAttributes;
+import com.ztg.common.risk.BurstBandPolicy;
 import com.ztg.pip.store.L4RateFlagStore;
 
 /**
@@ -25,8 +26,9 @@ import com.ztg.pip.store.L4RateFlagStore;
  * <p><b>rate-burst는 히스테리시스(이중 임계)로 판정한다</b>({@link #burstBand}): 진입은 {@code burst-threshold}
  * 초과, 해제는 {@code burst-exit-threshold} 이하. 단일 임계면 레이트가 경계에서 진동할 때 점수가 ±가중치로
  * 함께 출렁여 <b>매 진동이 epoch bump → fan-out → 전 노드 캐시 무효화</b>로 증폭된다(계단 함수의 경계 진동).
- * 직전 밴드는 {@link com.ztg.pip.store.SubjectRiskState}가 기억하고 여기엔 비교 기준으로만 들어온다
- * — 직전 IP({@code lastSeenIp})와 같은 패턴으로, 엔진의 순수성(입력만으로 결정)은 유지된다.
+ * 판정 구현은 게이트웨이의 바이패스 트리거와 {@link BurstBandPolicy} <b>한 벌을 공유</b>한다(로직 드리프트 방지
+ * — 임계값 정합은 배포 설정의 몫). 직전 밴드는 {@link com.ztg.pip.store.SubjectRiskState}가 기억하고 여기엔
+ * 비교 기준으로만 들어온다 — 직전 IP({@code lastSeenIp})와 같은 패턴으로, 엔진의 순수성(입력만으로 결정)은 유지된다.
  *
  * <p><b>ip-change는 hold 창으로 판정한다</b>: 변화 관측 순간뿐 아니라 hold({@code ip-change-hold}) 동안
  * 가중을 유지한다({@code ipChangeHeld}). 순간 신호면 바뀐 그 평가 다음의 재평가에서 바로 빠져 — 탈취
@@ -41,8 +43,7 @@ public class RiskEngine {
     private final int rateBurstWeight;
     private final int rateL4Weight;
     private final int offHoursWeight;
-    private final int burstThreshold;
-    private final int burstExitThreshold;
+    private final BurstBandPolicy burstBandPolicy;
     private final int businessHourStart;
     private final int businessHourEnd;
 
@@ -56,18 +57,13 @@ public class RiskEngine {
             @Value("${ztg.pip.risk.burst-exit-threshold:40}") int burstExitThreshold,
             @Value("${ztg.pip.risk.business-hour-start:9}") int businessHourStart,
             @Value("${ztg.pip.risk.business-hour-end:18}") int businessHourEnd) {
-        if (burstExitThreshold > burstThreshold) {
-            // 해제 임계가 진입 임계보다 높으면 히스테리시스가 뒤집힌다(진입 즉시 해제) — 기동 시 fail-fast.
-            throw new IllegalArgumentException("burst-exit-threshold(%d) must be <= burst-threshold(%d)"
-                    .formatted(burstExitThreshold, burstThreshold));
-        }
         this.deviceUntrustedWeight = deviceUntrustedWeight;
         this.ipChangeWeight = ipChangeWeight;
         this.rateBurstWeight = rateBurstWeight;
         this.rateL4Weight = rateL4Weight;
         this.offHoursWeight = offHoursWeight;
-        this.burstThreshold = burstThreshold;
-        this.burstExitThreshold = burstExitThreshold;
+        // 오설정(해제>진입)은 policy 생성자가 기동 시점에 fail-fast로 거른다.
+        this.burstBandPolicy = new BurstBandPolicy(burstThreshold, burstExitThreshold);
         this.businessHourStart = businessHourStart;
         this.businessHourEnd = businessHourEnd;
     }
@@ -129,10 +125,11 @@ public class RiskEngine {
         //    임계 사이 구간에서 직전 밴드가 유지될 때도 같은 신호명·가중치라 점수가 안정된다(epoch 출렁임 방지).
         int requests = signals == null ? 0 : signals.requestsInWindow();
         if (burstBand(requests, priorBurstBand)) {
-            String reason = requests > burstThreshold
-                    ? "%d requests in window exceed burst threshold %d".formatted(requests, burstThreshold)
+            String reason = requests > burstBandPolicy.enterThreshold()
+                    ? "%d requests in window exceed burst threshold %d"
+                            .formatted(requests, burstBandPolicy.enterThreshold())
                     : "%d requests in window hold burst band (above exit threshold %d)"
-                            .formatted(requests, burstExitThreshold);
+                            .formatted(requests, burstBandPolicy.exitThreshold());
             factors.add(new RiskFactor("rate-burst", rateBurstWeight, reason));
             score += rateBurstWeight;
         }
@@ -168,13 +165,10 @@ public class RiskEngine {
      *
      * <p>순수 함수 — 직전 밴드는 인자로 받는다({@code null}=첫 관측 → 진입 임계만 적용). 호출자
      * ({@link AssessmentService})가 평가 후 이 판정 결과를 {@code SubjectRiskState}에 기록해 다음 비교 기준으로 쓴다.
+     * 판정 자체는 {@link BurstBandPolicy}에 위임 — 게이트웨이의 바이패스 트리거와 같은 구현을 쓴다.
      */
     public boolean burstBand(int requestsInWindow, Boolean priorBurstBand) {
-        if (requestsInWindow > burstThreshold) {
-            return true;                                       // 진입 임계 초과: 무조건 폭주
-        }
-        // 사이 구간(exit < r <= enter): 직전 밴드 유지. 해제 임계 이하: 폭주 아님.
-        return Boolean.TRUE.equals(priorBurstBand) && requestsInWindow > burstExitThreshold;
+        return burstBandPolicy.judge(requestsInWindow, priorBurstBand);
     }
 
     private boolean withinBusinessHours(int hour) {

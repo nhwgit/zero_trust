@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 import com.ztg.common.model.DecisionRequest;
 import com.ztg.common.model.DecisionResponse;
 import com.ztg.common.model.RiskSignals;
+import com.ztg.common.risk.BurstBandPolicy;
 
 /**
  * PEP(Gateway)가 직전 인가 결정을 짧게 캐싱해, 같은 요청이 다시 오면 PDP 왕복을 건너뛰게 한다.
@@ -80,8 +81,7 @@ public class DecisionCache {
     private final long ttlNanos;
     private final long highRiskTtlNanos;
     private final int highRiskScore;
-    private final int burstThreshold;
-    private final int burstExitThreshold;
+    private final BurstBandPolicy burstBandPolicy;
     private final int maxSize;
     private final LongSupplier nanoClock;
     private final Counter hits;
@@ -105,17 +105,12 @@ public class DecisionCache {
     /** 테스트용 — 단조 시계를 주입해 위험적응 TTL 만료를 결정적으로 검증한다. */
     DecisionCache(boolean enabled, Duration ttl, Duration highRiskTtl, int highRiskScore, int burstThreshold,
                   int burstExitThreshold, int maxSize, MeterRegistry meterRegistry, LongSupplier nanoClock) {
-        if (burstExitThreshold > burstThreshold) {
-            // 해제 임계가 진입 임계보다 높으면 히스테리시스가 뒤집힌다(진입 즉시 해제) — 기동 시 fail-fast.
-            throw new IllegalArgumentException("burst-exit-threshold(%d) must be <= burst-threshold(%d)"
-                    .formatted(burstExitThreshold, burstThreshold));
-        }
         this.enabled = enabled;
         this.ttlNanos = ttl.toNanos();
         this.highRiskTtlNanos = highRiskTtl.toNanos();
         this.highRiskScore = highRiskScore;
-        this.burstThreshold = burstThreshold;
-        this.burstExitThreshold = burstExitThreshold;
+        // 오설정(해제>진입)은 policy 생성자가 기동 시점에 fail-fast로 거른다. PIP rate-burst 판정과 같은 구현.
+        this.burstBandPolicy = new BurstBandPolicy(burstThreshold, burstExitThreshold);
         this.maxSize = maxSize;
         this.nanoClock = nanoClock;
         // 캐시 히트율을 보이는 RED 보조 지표(히트면 PDP 호출이 통째로 빠진다).
@@ -230,9 +225,9 @@ public class DecisionCache {
             return false;   // 해석 불가한 레이트는 트리거로 쓰지 않는다(보수적)
         }
         Boolean prior = lastBand.get(request.subject());
-        // 히스테리시스: 진입 임계 초과면 폭주, 해제 임계 이하면 정상, 사이 구간은 직전 밴드 유지(첫 관측은 정상 취급).
-        boolean burst = requests > burstThreshold
-                || (Boolean.TRUE.equals(prior) && requests > burstExitThreshold);
+        // 히스테리시스 판정은 PIP rate-burst와 공유 구현(BurstBandPolicy) — 진입 초과면 폭주, 해제 이하면
+        // 정상, 사이 구간은 직전 밴드 유지(첫 관측은 정상 취급). 두 곳의 판정이 어긋나면 빈 재평가가 생긴다.
+        boolean burst = burstBandPolicy.judge(requests, prior);
         lastBand.put(request.subject(), burst);                   // 다음 비교 기준 갱신(주체별)
         return prior != null && prior != burst;                   // 첫 관측은 전이 아님
     }
