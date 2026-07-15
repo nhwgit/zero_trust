@@ -42,9 +42,36 @@ public class SubjectRiskState {
     /**
      * 주체별 위험 맥락 스냅샷(불변). {@code lastScore=null}=점수 미관측, {@code lastBurstBand=null}=밴드 미관측,
      * {@code ipChangeHoldUntilNanos=null}=활성 hold 없음(변화 미관측 또는 만료 후 새 변화 없음).
+     *
+     * <p>필드 하나만 바꾼 새 스냅샷은 {@code with*} 메서드로 만든다 — 위치 기반 {@code new State(...)}를 이
+     * record 안에 가둬, 호출부는 "무엇이 바뀌는가"만 드러내고 필드 순서 실수(footgun)를 한 곳으로 모은다.
      */
     private record State(String lastSeenIp, long epoch, Integer lastScore, Boolean lastBurstBand,
-                         Long ipChangeHoldUntilNanos) {}
+                         Long ipChangeHoldUntilNanos) {
+
+        /** 모든 필드가 빈 초기 스냅샷 — 첫 관측(주체 미기록)의 출발점. 불변이라 공유해도 안전. */
+        static final State EMPTY = new State(null, 0L, null, null, null);
+
+        /** 이번 IP와 hold 만료 시각을 반영한다(IP 변화 판정·hold 시작은 호출부가 계산해 넘긴다). */
+        State withIp(String ip, Long holdUntilNanos) {
+            return new State(ip, epoch, lastScore, lastBurstBand, holdUntilNanos);
+        }
+
+        /** 이번 점수를 반영한다. {@code bump=true}(위험 변화)면 epoch를 +1 한다(능동 무효화 토큰). */
+        State withScore(int score, boolean bump) {
+            return new State(lastSeenIp, bump ? epoch + 1 : epoch, score, lastBurstBand, ipChangeHoldUntilNanos);
+        }
+
+        /** 이번 폭주 밴드를 반영한다(다음 평가의 히스테리시스 기준). */
+        State withBand(boolean band) {
+            return new State(lastSeenIp, epoch, lastScore, band, ipChangeHoldUntilNanos);
+        }
+
+        /** 위험 맥락을 비우되 epoch만 보존한다(데모 리셋 — {@link #evict}의 단조성 보존 근거 참고). */
+        State resetKeepingEpoch() {
+            return new State(null, epoch, null, null, null);
+        }
+    }
 
     private final Map<String, State> states = new ConcurrentHashMap<>();
     private final long ipChangeHoldNanos;
@@ -80,14 +107,13 @@ public class SubjectRiskState {
             return;
         }
         states.compute(subject, (k, s) -> {
-            if (s == null) {
-                return new State(sourceIp, 0L, null, null, null);
-            }
+            State cur = s == null ? State.EMPTY : s;
+            boolean changed = cur.lastSeenIp() != null && !sourceIp.equals(cur.lastSeenIp());
             // 양쪽 다 Long으로 박싱 — long/Long 혼합 삼항은 null 쪽을 언박싱해 NPE가 난다.
-            Long holdUntil = s.lastSeenIp() != null && !sourceIp.equals(s.lastSeenIp())
+            Long holdUntil = changed
                     ? Long.valueOf(nanoClock.getAsLong() + ipChangeHoldNanos)   // 변화 관측: hold 시작/연장
-                    : s.ipChangeHoldUntilNanos();                               // 동일 IP: 기존 hold 유지(시간 만료에 맡김)
-            return new State(sourceIp, s.epoch(), s.lastScore(), s.lastBurstBand(), holdUntil);
+                    : cur.ipChangeHoldUntilNanos();                             // 동일/첫 관측: 기존 hold 유지(시간 만료에 맡김)
+            return cur.withIp(sourceIp, holdUntil);
         });
     }
 
@@ -118,15 +144,10 @@ public class SubjectRiskState {
      */
     public long recordScore(String subject, int score) {
         State updated = states.compute(subject, (k, s) -> {
-            if (s == null) {
-                return new State(null, 0L, score, null, null);                                 // 첫 관측: 기준 설정, bump 없음
-            }
-            if (s.lastScore() == null || s.lastScore() == score) {
-                return new State(s.lastSeenIp(), s.epoch(), score, s.lastBurstBand(),
-                        s.ipChangeHoldUntilNanos());                                           // 변화 없음: epoch 유지
-            }
-            return new State(s.lastSeenIp(), s.epoch() + 1, score, s.lastBurstBand(),
-                    s.ipChangeHoldUntilNanos());                                               // 위험 변화: 능동 무효화 bump
+            State cur = s == null ? State.EMPTY : s;
+            // 첫 관측(lastScore=null)·동일 점수는 기준 설정/유지라 bump 없음. 점수가 달라졌을 때만 능동 무효화.
+            boolean bump = cur.lastScore() != null && cur.lastScore() != score;
+            return cur.withScore(score, bump);
         });
         return updated.epoch();
     }
@@ -139,9 +160,7 @@ public class SubjectRiskState {
 
     /** 이번 폭주 밴드를 기록한다(다음 평가의 히스테리시스 판정 기준). */
     public void recordBurstBand(String subject, boolean band) {
-        states.compute(subject, (k, s) -> s == null
-                ? new State(null, 0L, null, band, null)
-                : new State(s.lastSeenIp(), s.epoch(), s.lastScore(), band, s.ipChangeHoldUntilNanos()));
+        states.compute(subject, (k, s) -> (s == null ? State.EMPTY : s).withBand(band));
     }
 
     /**
@@ -165,6 +184,6 @@ public class SubjectRiskState {
      * 되돌리면 게이트웨이 조회(옛 큰 epoch)와 적재(새 작은 epoch)가 영구히 갈려 그 주체가 캐시 불능이 된다.
      */
     public void evict(String subject) {
-        states.computeIfPresent(subject, (k, s) -> new State(null, s.epoch(), null, null, null));
+        states.computeIfPresent(subject, (k, s) -> s.resetKeepingEpoch());
     }
 }
