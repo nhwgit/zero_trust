@@ -5,7 +5,7 @@
 사용법과 TLS/mTLS 핸드셰이크 분석을 다룬다.
 
 산출물은 [mtls-tls12.pcap](./mtls-tls12.pcap)(핵심)과 [mtls-tls13.pcap](./mtls-tls13.pcap)(대조)이다.
-재현 절차는 §7, Wireshark/tshark 필터는 §4와 §7에 있다.
+재현 절차는 §7, Wireshark/tshark 필터는 §7에 있다.
 
 ---
 
@@ -130,7 +130,7 @@ NewSessionTicket(type 4)이 그 신호다.
 
 ### TLS 1.2 풀 핸드셰이크 한 흐름 (stream 3)
 
-```
+```text
 46·47·48  TCP SYN/SYN-ACK/ACK
 49  CH         클라: ClientHello
 51  SH+Cert+SKE+CertReq+SHD   서버 flight 한 패킷(2093B, type 2,11,12,13,14)  ← 서버 인증서 CN=pdp + "클라 인증서 내놔"
@@ -149,7 +149,7 @@ Certificate, …, Server Hello Done"으로 한 줄에 합쳐져 보이는 이유
 
 인증서 없이 pdp:8084를 직접 호출한 stream 2:
 
-```
+```text
 frame 41  50514 → 8084   Certificate(type 11) + ClientKeyExchange(16),  certificates_length = 0  ← 빈 인증서!
 frame 42  8084 → 50514   TLS Alert,  level=2(fatal),  desc=40(handshake_failure)               ← 서버가 즉시 절단
 ```
@@ -208,7 +208,7 @@ wsl -d Ubuntu-24.04 -- bash -c "cd <repo>/docker && docker compose -f docker-com
 
 ### 핵심 Wireshark/tshark 필터
 
-```
+```text
 tls.handshake.type == 1/2/11/13/15   ClientHello/ServerHello/Certificate/CertificateRequest/CertificateVerify
 tcp.port == 8084 / 8083              gateway→pdp / pdp→pip 데이터 구간
 tcp.stream == N                      한 연결만
