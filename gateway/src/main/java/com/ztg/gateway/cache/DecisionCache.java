@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 import io.micrometer.core.instrument.Counter;
@@ -30,7 +31,8 @@ import com.ztg.common.risk.BurstBandPolicy;
  * {@link DecisionResponse#epoch()}로 게이트웨이까지 역전파한다. 게이트웨이(여기)는 결정을 적재할 때 그 epoch를
  * <b>학습</b>(주체별 단조 증가)하고, 그 주체의 모든 캐시 키에 현재 epoch를 끼운다. 따라서 epoch가 한 번 오르면
  * 그 주체의 <b>옛 엔트리는 모두 한 번에 키-아웃</b>(다른 epoch라 더는 조회되지 않음) → 같은 세션에서 <b>재로그인
- * 없이</b> 위험 상승이 다음 결정부터 반영된다. 보조 인덱스 없이 O(1)이며, 키-아웃된 고아는 lazy/크기상한으로 회수된다.
+ * 없이</b> 위험 상승이 다음 결정부터 반영된다. 보조 인덱스 없이 O(1)이며, 키-아웃된 고아는 TTL 만료 후
+ * sweep으로 회수된다(아래 "고아 회수" 참고).
  *
  * <p><b>다중 게이트웨이(Redis fan-out):</b> 위 lazy 학습은 <i>이 노드</i>가 그 주체로 PDP를 한 번 다녀와야
  * 새 epoch를 안다. 노드가 여럿이면 위험을 유발하지 않은 다른 노드는 TTL 동안 옛 ALLOW를 계속 히트로 낸다.
@@ -53,14 +55,25 @@ import com.ztg.common.risk.BurstBandPolicy;
  * 단일 임계면 레이트가 경계에서 진동할 때 매 진동이 전이로 판정돼 엣지 트리거가 사실상 레벨 트리거로
  * 퇴화한다(바이패스 폭풍). 새 IP는 이 경로가 필요 없다 — 키에 IP가 남아 자동 미스→재평가다.
  *
+ * <p><b>고아 회수(sweep — 공격자 유발 캐시 정지 방지):</b> lazy 제거는 <b>같은 키로 다시 조회될 때만</b>
+ * 걸린다. 그런데 epoch 키-아웃된 옛 세대 엔트리와, 회전된 source-ip(IP는 키에 남는다)로 적재된 엔트리는
+ * 그 키로 다시 조회되지 않는 <b>고아</b>다 — 만료돼도 영영 안 걷힌다. {@link #put}은 가득 차면 새 키를
+ * 버리므로, 공격자가 IP를 회전시키며 {@code max-size}를 채우면 이후 모든 정상 결정이 적재를 거부당해
+ * 캐시가 <b>사실상 영구 off</b>가 된다(모든 요청이 PDP 왕복 = 공격자 유발 성능 DoS). 그래서 가득 참을
+ * 만난 put이 <b>만료 엔트리를 전수 회수(sweep)</b>한다 — 모든 엔트리는 유한 TTL을 가지므로 어떤 고아든
+ * TTL이 지나면 회수 가능해지고, 가득 참으로 인한 적재 거부는 <b>최대 TTL 시간으로 바운드</b>된다.
+ * sweep 자체는 O(n) 스캔이라, 미만료 엔트리로 계속 채워 매 put마다 헛스캔을 유발하는 2차 CPU 소모를
+ * 막기 위해 최소 간격({@code sweep-interval})으로 스로틀한다.
+ *
  * <p><b>왜 직접 구현(외부 캐시 라이브러리 미사용):</b> 부하 데모의 캐시는 핫 키 소수에 대한 짧은 TTL이면
  * 충분하고, TTL·무효화·크기상한을 코드에 그대로 드러내 "캐싱의 효과와 위험"을 보이는 게 학습 목적에 맞다.
- * 만료는 조회 시 lazy로 걷어내고, 크기상한을 둬 무한 증식을 막는다(데모 기준 단순화 — 정교한 LRU는 미구현).
+ * 만료는 조회 시 lazy + 가득 참 시 sweep으로 걷어내고, 크기상한을 둬 무한 증식을 막는다(데모 기준 단순화 —
+ * 정교한 LRU는 미구현).
  *
  * <p><b>안전:</b> 적재는 PDP가 <i>실제로 내린</i> 결정(ALLOW/정책 DENY)만 대상으로 한다. PDP 호출 실패로 인한
  * fail-close(DENY)는 호출부에서 처리되어 캐시에 들어오지 않으므로, 일시적 장애가 캐시에 굳어버리지 않는다.
  *
- * <p>설정: {@code ztg.gateway.decision-cache.{enabled,ttl,high-risk-ttl,high-risk-score,max-size}}.
+ * <p>설정: {@code ztg.gateway.decision-cache.{enabled,ttl,high-risk-ttl,high-risk-score,max-size,sweep-interval}}.
  * {@code enabled=false}로 캐싱을 꺼 <b>같은 바이너리로 before(캐시 off)/after(캐시 on)</b> 부하를 비교할 수 있다.
  */
 @Component
@@ -83,11 +96,15 @@ public class DecisionCache {
     private final int highRiskScore;
     private final BurstBandPolicy burstBandPolicy;
     private final int maxSize;
+    private final long sweepIntervalNanos;
+    /** 다음 sweep이 허용되는 시각(nanoTime). CAS로 갱신해 한 시점에 한 스레드만 스캔한다. */
+    private final AtomicLong nextSweepAtNanos;
     private final LongSupplier nanoClock;
     private final Counter hits;
     private final Counter misses;
     private final Counter bypasses;
     private final Counter fanoutApplied;
+    private final Counter sweepReclaimed;
 
     @Autowired
     DecisionCache(@Value("${ztg.gateway.decision-cache.enabled:true}") boolean enabled,
@@ -97,14 +114,16 @@ public class DecisionCache {
                   @Value("${ztg.gateway.rate.burst-threshold:60}") int burstThreshold,
                   @Value("${ztg.gateway.rate.burst-exit-threshold:40}") int burstExitThreshold,
                   @Value("${ztg.gateway.decision-cache.max-size:10000}") int maxSize,
+                  @Value("${ztg.gateway.decision-cache.sweep-interval:1s}") Duration sweepInterval,
                   MeterRegistry meterRegistry) {
-        this(enabled, ttl, highRiskTtl, highRiskScore, burstThreshold, burstExitThreshold, maxSize,
+        this(enabled, ttl, highRiskTtl, highRiskScore, burstThreshold, burstExitThreshold, maxSize, sweepInterval,
                 meterRegistry, System::nanoTime);
     }
 
     /** 테스트용 — 단조 시계를 주입해 위험적응 TTL 만료를 결정적으로 검증한다. */
     DecisionCache(boolean enabled, Duration ttl, Duration highRiskTtl, int highRiskScore, int burstThreshold,
-                  int burstExitThreshold, int maxSize, MeterRegistry meterRegistry, LongSupplier nanoClock) {
+                  int burstExitThreshold, int maxSize, Duration sweepInterval, MeterRegistry meterRegistry,
+                  LongSupplier nanoClock) {
         this.enabled = enabled;
         this.ttlNanos = ttl.toNanos();
         this.highRiskTtlNanos = highRiskTtl.toNanos();
@@ -112,7 +131,9 @@ public class DecisionCache {
         // 오설정(해제>진입)은 policy 생성자가 기동 시점에 fail-fast로 거른다. PIP rate-burst 판정과 같은 구현.
         this.burstBandPolicy = new BurstBandPolicy(burstThreshold, burstExitThreshold);
         this.maxSize = maxSize;
+        this.sweepIntervalNanos = sweepInterval.toNanos();
         this.nanoClock = nanoClock;
+        this.nextSweepAtNanos = new AtomicLong(nanoClock.getAsLong());   // 첫 sweep은 즉시 허용
         // 캐시 히트율을 보이는 RED 보조 지표(히트면 PDP 호출이 통째로 빠진다).
         this.hits = meterRegistry.counter("ztg.pdp.cache", "result", "hit");
         this.misses = meterRegistry.counter("ztg.pdp.cache", "result", "miss");
@@ -120,6 +141,8 @@ public class DecisionCache {
         this.bypasses = meterRegistry.counter("ztg.pdp.cache", "result", "bypass");
         // 다른 GW가 유발한 epoch 상승을 Redis fan-out으로 받아 적용한 횟수(원격 무효화 가시성).
         this.fanoutApplied = meterRegistry.counter("ztg.pdp.cache", "result", "fanout");
+        // 가득 참에서 sweep이 회수한 고아 수. 이 값이 치솟으면 키 공간을 채우는 이상 트래픽(IP 회전 등) 신호다.
+        this.sweepReclaimed = meterRegistry.counter("ztg.pdp.cache.sweep.reclaimed");
         meterRegistry.gauge("ztg.pdp.cache.size", store, java.util.Map::size);
     }
 
@@ -151,7 +174,8 @@ public class DecisionCache {
     /**
      * 결정을 위험적응 TTL 동안 캐싱한다. 적재 전에 결정이 운반한 {@link DecisionResponse#epoch()}를 학습해
      * (주체별 단조 증가) 이후 조회의 키가 올바른 세대를 가리키게 한다 — epoch가 올랐으면 이 주체의 옛 엔트리는
-     * 즉시 키-아웃된다(능동 무효화). 가득 찼고 새 키면 적재를 건너뛴다(데모 단순화).
+     * 즉시 키-아웃된다(능동 무효화). 가득 찼고 새 키면 먼저 만료 고아를 {@link #sweepExpired() sweep}으로
+     * 회수해 자리를 되찾고, 그래도 가득이면(전부 미만료) 적재를 건너뛴다(데모 단순화).
      *
      * <p><b>경합 안전(fail-close):</b> 키는 {@code knownEpochs}를 다시 읽지 않고 <b>이 결정의 {@code value.epoch()}</b>로
      * 만든다. 위험 전이 순간 같은 주체·요청에 두 평가가 동시에 진행 중일 때, 뒤늦게 도착한 옛 epoch의 stale ALLOW가
@@ -164,9 +188,41 @@ public class DecisionCache {
         learnEpoch(request.subject(), value.epoch());
         Key key = cacheKey(request, value.epoch());
         if (store.size() >= maxSize && !store.containsKey(key)) {
-            return;
+            sweepExpired();
+            if (store.size() >= maxSize) {
+                return;
+            }
         }
         store.put(key, new Entry(value, nanoClock.getAsLong() + ttlNanosFor(value.score())));
+    }
+
+    /**
+     * 만료된 엔트리를 전수 회수한다(고아 회수). lazy 제거는 같은 키의 재조회가 전제라, epoch 키-아웃 고아와
+     * 회전된 IP의 엔트리(다시 조회될 키가 아님)는 만료돼도 영영 안 걷힌다 — 가득 참을 만난 put이 이 sweep을
+     * 호출해 자리를 되찾는다. 모든 엔트리는 유한 TTL이므로 어떤 고아든 TTL 후엔 회수 대상이 되고, 가득 참으로
+     * 인한 적재 거부는 최대 TTL로 바운드된다(IP 회전으로 캐시를 영구 off시키는 공격 차단).
+     *
+     * <p><b>스로틀:</b> sweep은 O(n) 스캔이라, 미만료 엔트리로 계속 채워 매 put마다 헛스캔을 유발하는
+     * 2차 CPU 소모를 막기 위해 최소 간격({@code sweep-interval})을 강제한다. 다음 허용 시각을 CAS로
+     * 선점한 한 스레드만 스캔하고, 경합에 진 스레드는 그냥 지나간다(회수는 다음 기회에 — 안전).
+     */
+    private void sweepExpired() {
+        long now = nanoClock.getAsLong();
+        long allowedAt = nextSweepAtNanos.get();
+        // (now - allowedAt) < 0 이면 아직 간격 이내. 차이로 비교해 nanoTime 래핑에도 안전하게 판정한다.
+        if (now - allowedAt < 0 || !nextSweepAtNanos.compareAndSet(allowedAt, now + sweepIntervalNanos)) {
+            return;
+        }
+        int reclaimed = 0;
+        for (Map.Entry<Key, Entry> e : store.entrySet()) {
+            // remove(key, value)로 값까지 맞춰 지워, 스캔 중 같은 키에 새로 적재된 엔트리를 오삭하지 않는다.
+            if (now - e.getValue().expiresAtNanos() >= 0 && store.remove(e.getKey(), e.getValue())) {
+                reclaimed++;
+            }
+        }
+        if (reclaimed > 0) {
+            sweepReclaimed.increment(reclaimed);
+        }
     }
 
     /** 주체의 현재 epoch를 더 큰 값으로만 갱신한다(역전파 순서 뒤바뀜·재시도에도 단조 보장). */

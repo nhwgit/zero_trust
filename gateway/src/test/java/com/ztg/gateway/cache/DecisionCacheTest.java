@@ -19,7 +19,8 @@ import com.ztg.common.model.RiskSignals;
 
 /**
  * {@link DecisionCache} 단위 테스트 — 값 동등성 키, 휘발성 레이트 제외, source-ip 분기, enabled 토글에 더해
- * 능동 무효화(주체 epoch 키)와 위험적응 TTL을 검증한다. 시간 의존 테스트는 단조 시계를 주입해 결정적으로 둔다.
+ * 능동 무효화(주체 epoch 키), 위험적응 TTL, 가득 참 시 고아 회수(sweep)와 그 스로틀을 검증한다.
+ * 시간 의존 테스트는 단조 시계를 주입해 결정적으로 둔다.
  */
 class DecisionCacheTest {
 
@@ -30,7 +31,13 @@ class DecisionCacheTest {
 
     private static DecisionCache cache(boolean enabled, LongSupplier nanoClock) {
         return new DecisionCache(enabled, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 60, 40, 100,
-                new SimpleMeterRegistry(), nanoClock);
+                Duration.ofSeconds(1), new SimpleMeterRegistry(), nanoClock);
+    }
+
+    /** sweep 검증용 소형 캐시: 크기 2, sweep 간격 지정. 그 외는 기본 캐시와 동일. */
+    private static DecisionCache smallCache(Duration sweepInterval, LongSupplier nanoClock) {
+        return new DecisionCache(true, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 60, 40, 2,
+                sweepInterval, new SimpleMeterRegistry(), nanoClock);
     }
 
     private static DecisionRequest request(String subject, String path) {
@@ -223,6 +230,50 @@ class DecisionCacheTest {
 
         // /a(epoch=2)는 여전히 살아 있다(낮은 fan-out이 학습 epoch를 깎지 못했다는 증거).
         assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();
+    }
+
+    @Test
+    void fullCacheReclaimsExpiredOrphansOnPut() {
+        // 공격 시나리오: source-ip는 키에 남으므로 IP를 회전시키면 매번 새 키가 적재된다. 그 엔트리들은
+        // 다시 조회될 키가 아니라(고아) lazy 제거가 영영 안 걸리고, sweep이 없으면 max-size 영구 점유로
+        // put이 계속 거부돼 캐시가 사실상 off가 된다(epoch 키-아웃 고아도 같은 경로로 회수된다).
+        AtomicLong nanos = new AtomicLong(1_000_000_000L);
+        DecisionCache cache = smallCache(Duration.ofSeconds(1), nanos::get);   // 크기 2
+        cache.put(requestWithCtx("mallory", "/api/hello", "10.0.0.1", "1"), decision(Decision.ALLOW, 10, 0));
+        cache.put(requestWithCtx("mallory", "/api/hello", "10.0.0.2", "1"), decision(Decision.ALLOW, 10, 0));
+
+        // 가득 + 전부 미만료: sweep이 돌아도 회수할 게 없어 적재 생략(기존 크기상한 동작 유지).
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 0));
+        assertThat(cache.getIfPresent(request("alice", "/api/a"))).isNull();
+
+        // TTL(60s) 경과 → 고아 만료. 다음 put이 sweep으로 자리를 되찾아 정상 적재된다 = 캐시 정지는 TTL로 바운드.
+        nanos.addAndGet(Duration.ofSeconds(61).toNanos());
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 0));
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();
+    }
+
+    @Test
+    void sweepIsThrottledToMinimumInterval() {
+        // 2차 DoS 방지: 미만료 엔트리로 계속 가득 채워도 매 put이 O(n) 스캔을 유발하지 않는다 —
+        // sweep은 최소 간격(여기선 60s) 이내 재진입 시 스캔 없이 건너뛰고, 간격이 지나야 다시 회수한다.
+        AtomicLong nanos = new AtomicLong(1_000_000_000L);
+        DecisionCache cache = smallCache(Duration.ofSeconds(60), nanos::get);  // 크기 2, 간격 60s
+        // 고위험(score≥50) 결정은 TTL 1s → 금방 만료돼 회수 대상이 된다.
+        cache.put(requestWithCtx("mallory", "/api/hello", "10.0.0.1", "1"), decision(Decision.DENY, 90, 0));
+        cache.put(requestWithCtx("mallory", "/api/hello", "10.0.0.2", "1"), decision(Decision.DENY, 90, 0));
+
+        nanos.addAndGet(Duration.ofSeconds(2).toNanos());                      // 고아 만료
+        cache.put(request("alice", "/api/a"), decision(Decision.DENY, 90, 0)); // sweep 1회차: 회수 → 적재 성공
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isFalse();
+        cache.put(requestWithCtx("mallory", "/api/hello", "10.0.0.3", "1"), decision(Decision.DENY, 90, 0)); // 다시 가득
+
+        nanos.addAndGet(Duration.ofSeconds(2).toNanos());                      // 또 만료됐지만 간격(60s) 이내
+        cache.put(request("bob", "/api/b"), decision(Decision.DENY, 90, 0));   // sweep 스킵 → 적재 생략
+        assertThat(cache.getIfPresent(request("bob", "/api/b"))).isNull();
+
+        nanos.addAndGet(Duration.ofSeconds(61).toNanos());                     // 간격 경과 → 다시 회수 가능
+        cache.put(request("bob", "/api/b"), decision(Decision.DENY, 90, 0));
+        assertThat(cache.getIfPresent(request("bob", "/api/b")).isAllowed()).isFalse();
     }
 
     private static DecisionRequest requestWithCtx(String subject, String path, String ip, String rate) {

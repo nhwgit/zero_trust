@@ -49,6 +49,10 @@ ztg:
       high-risk-ttl: ${DECISION_CACHE_HIGH_RISK_TTL:1s}
       high-risk-score: ${DECISION_CACHE_HIGH_RISK_SCORE:50}
       max-size: ${DECISION_CACHE_MAX_SIZE:10000}
+      # 고아 회수(sweep) 스로틀: 가득 찬 put이 만료 엔트리를 전수 회수하는 최소 간격. epoch 키-아웃 고아와
+      # 회전된 IP 엔트리는 재조회가 없어 lazy 제거가 안 걸리므로, sweep 없이는 IP 회전만으로 max-size를
+      # 영구 점유해 캐시를 사실상 꺼버릴 수 있다(공격자 유발 DoS). 간격은 O(n) 스캔의 CPU 소모 상한이다.
+      sweep-interval: ${DECISION_CACHE_SWEEP_INTERVAL:1s}
   # 다중 GW 능동 무효화 fan-out(Redis pub/sub) 구독. 기본 off — 켜면 한 노드에서 오른 epoch가
   # 모든 노드의 캐시를 동시에 키-아웃한다. off면 Redis에 연결하지 않는다(단일 GW/테스트 무영향).
   fanout:
