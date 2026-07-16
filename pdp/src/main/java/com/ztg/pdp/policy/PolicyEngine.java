@@ -12,6 +12,7 @@ import com.ztg.common.model.DecisionRequest;
 import com.ztg.common.model.DecisionResponse;
 import com.ztg.common.model.RiskAssessment;
 import com.ztg.common.model.SubjectAttributes;
+import com.ztg.common.risk.BusinessHours;
 
 /**
  * ABAC 정책 엔진 — 요청 + 주체 속성 + <b>동적 위험 평가</b> + 시각을 받아 ALLOW/DENY를 판단한다.
@@ -39,8 +40,7 @@ public class PolicyEngine {
     private static final String FINANCE = "finance";
 
     private final Clock clock;
-    private final int businessHourStart;
-    private final int businessHourEnd;
+    private final BusinessHours businessHours;
     private final int riskThreshold;
 
     public PolicyEngine(Clock clock,
@@ -48,8 +48,9 @@ public class PolicyEngine {
                         @Value("${ztg.pdp.business-hour-end:18}") int businessHourEnd,
                         @Value("${ztg.pdp.risk-threshold:80}") int riskThreshold) {
         this.clock = clock;
-        this.businessHourStart = businessHourStart;
-        this.businessHourEnd = businessHourEnd;
+        // PIP off-hours 판정과 공유 구현(BusinessHours) — 두 곳의 업무시간 판정이 어긋나지 않게 한다.
+        // 오설정(끝<시작)은 record 생성자가 기동 시점에 fail-fast로 거른다.
+        this.businessHours = new BusinessHours(businessHourStart, businessHourEnd);
         this.riskThreshold = riskThreshold;
     }
 
@@ -85,9 +86,9 @@ public class PolicyEngine {
             failures.add("department must be finance (was %s)".formatted(attrs.department()));
         }
         LocalTime now = LocalTime.now(clock);
-        if (!withinBusinessHours(now)) {
+        if (!businessHours.contains(now.getHour())) {
             failures.add("must be within business hours %02d-%02d (was %s)"
-                    .formatted(businessHourStart, businessHourEnd, now.withNano(0)));
+                    .formatted(businessHours.startHour(), businessHours.endHour(), now.withNano(0)));
         }
         if (!attrs.deviceTrusted()) {
             failures.add("device must be trusted (was untrusted)");
@@ -98,16 +99,5 @@ public class PolicyEngine {
                     "payroll access granted (finance, business hours, trusted device)", risk, epoch);
         }
         return DecisionResponse.deny("payroll denied: " + String.join("; ", failures), risk, epoch);
-    }
-
-    private boolean withinBusinessHours(LocalTime now) {
-        if (now.isBefore(LocalTime.of(businessHourStart, 0))) {
-            return false;
-        }
-        // end=24는 "자정까지(하루 종일)"를 뜻한다. LocalTime.of(24,0)은 DateTimeException이므로 분리 처리.
-        if (businessHourEnd >= 24) {
-            return true;
-        }
-        return now.isBefore(LocalTime.of(businessHourEnd, 0));
     }
 }
