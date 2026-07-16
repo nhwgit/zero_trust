@@ -21,7 +21,12 @@ class RiskEngineTest {
 
     /** 기본 가중치로 엔진 생성(설정 디폴트와 동일 — 폭주 진입>60/해제≤40). */
     private RiskEngine engine() {
-        return new RiskEngine(40, 30, 40, 40, 15, 60, 40, 9, 18);
+        return new RiskEngine(new RiskProperties(40, 30, 40, 40, 15, 60, 40, 9, 18));
+    }
+
+    /** hold·직전 밴드·L4 플래그 없는 기본 맥락 평가(테스트 편의 — 프로덕션 경로는 항상 전체 인자). */
+    private RiskAssessment assess(SubjectAttributes base, RiskSignals signals, String lastSeenIp) {
+        return engine().assess(base, signals, lastSeenIp, false, null, null);
     }
 
     /** finance/신뢰/baseline 지정 주체. */
@@ -36,7 +41,7 @@ class RiskEngineTest {
     @Test
     void quiet_subject_scores_baseline_only_and_allows() {
         // 정상: trusted, 같은 IP, 레이트 낮음, 업무시간 → baseline 10만.
-        RiskAssessment a = engine().assess(
+        RiskAssessment a = assess(
                 alice(10),
                 new RiskSignals("1.2.3.4", 5, 12),
                 "1.2.3.4");
@@ -49,7 +54,7 @@ class RiskEngineTest {
     @Test
     void new_ip_plus_burst_crosses_threshold_and_denies() {
         // 데모 핵심: 새 IP(+30) + 폭주(+40) + baseline 10 = 80 → DENY(재로그인 없이 위험 상승).
-        RiskAssessment a = engine().assess(
+        RiskAssessment a = assess(
                 alice(10),
                 new RiskSignals("9.9.9.9", 100, 12),   // 직전 1.2.3.4와 다름, 윈도우 100 > 60
                 "1.2.3.4");
@@ -64,7 +69,7 @@ class RiskEngineTest {
     @Test
     void first_observation_does_not_count_as_ip_change() {
         // lastSeenIp=null(첫 관측)이면 IP 변화로 치지 않는다 → baseline만.
-        RiskAssessment a = engine().assess(
+        RiskAssessment a = assess(
                 alice(10),
                 new RiskSignals("9.9.9.9", 5, 12),
                 null);
@@ -75,7 +80,7 @@ class RiskEngineTest {
 
     @Test
     void same_ip_is_not_a_change() {
-        RiskAssessment a = engine().assess(
+        RiskAssessment a = assess(
                 alice(10),
                 new RiskSignals("1.2.3.4", 5, 12),
                 "1.2.3.4");
@@ -86,7 +91,7 @@ class RiskEngineTest {
     @Test
     void untrusted_device_and_off_hours_add_up() {
         // 미신뢰 디바이스(+40) + 업무시간 외(+15) + baseline 20 = 75 → 임계 미만이지만 누적 확인.
-        RiskAssessment a = engine().assess(
+        RiskAssessment a = assess(
                 new SubjectAttributes("bob", "engineering", false, 20),
                 new RiskSignals("1.1.1.1", 5, 3),   // 03시 = 업무시간 밖
                 "1.1.1.1");
@@ -100,7 +105,7 @@ class RiskEngineTest {
     @Test
     void score_is_clamped_to_100() {
         // 미등록 주체(baseline 100) + 다른 신호들이 더해져도 100을 넘지 않는다.
-        RiskAssessment a = engine().assess(
+        RiskAssessment a = assess(
                 new SubjectAttributes("mallory", "unknown", false, 100),
                 new RiskSignals("9.9.9.9", 100, 3),
                 "1.1.1.1");
@@ -112,9 +117,9 @@ class RiskEngineTest {
     @Test
     void burst_threshold_is_exclusive_boundary() {
         // 경계: 직전 밴드 없음(첫 관측) 기준 — 정확히 진입 임계(60)는 급증 아님, 61부터 급증.
-        assertThat(engine().assess(alice(0), new RiskSignals("1.1.1.1", 60, 12), "1.1.1.1").factors())
+        assertThat(assess(alice(0), new RiskSignals("1.1.1.1", 60, 12), "1.1.1.1").factors())
                 .extracting(RiskFactor::signal).doesNotContain("rate-burst");
-        assertThat(engine().assess(alice(0), new RiskSignals("1.1.1.1", 61, 12), "1.1.1.1").factors())
+        assertThat(assess(alice(0), new RiskSignals("1.1.1.1", 61, 12), "1.1.1.1").factors())
                 .extracting(RiskFactor::signal).contains("rate-burst");
     }
 
@@ -181,7 +186,7 @@ class RiskEngineTest {
     void exit_threshold_above_enter_threshold_fails_fast() {
         // 해제 임계 > 진입 임계는 히스테리시스가 뒤집힌 오설정 — 기동 시점에 즉시 실패해야 한다.
         org.assertj.core.api.Assertions.assertThatThrownBy(
-                        () -> new RiskEngine(40, 30, 40, 40, 15, 60, 61, 9, 18))
+                        () -> new RiskEngine(new RiskProperties(40, 30, 40, 40, 15, 60, 61, 9, 18)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("burst-exit-threshold");
     }
@@ -208,7 +213,7 @@ class RiskEngineTest {
     @Test
     void null_signals_yield_baseline_only() {
         // 신호 미상(null)이어도 NPE 없이 baseline만 반영(방어적).
-        RiskAssessment a = engine().assess(alice(10), null, "1.2.3.4");
+        RiskAssessment a = assess(alice(10), null, "1.2.3.4");
 
         assertThat(a.score()).isEqualTo(10);
         assertThat(a.factors()).extracting(RiskFactor::signal).containsExactly("baseline");

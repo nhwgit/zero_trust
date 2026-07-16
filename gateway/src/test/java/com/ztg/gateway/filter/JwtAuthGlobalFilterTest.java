@@ -26,6 +26,8 @@ import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.web.server.ServerWebExchange;
 
+import com.ztg.gateway.config.RateProperties;
+
 import com.ztg.common.model.DecisionRequest;
 import com.ztg.common.model.DecisionResponse;
 
@@ -55,7 +57,8 @@ class JwtAuthGlobalFilterTest {
     private final ReactiveJwtDecoder decoder = mock(ReactiveJwtDecoder.class);
     private final PdpClient pdpClient = mock(PdpClient.class);
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    private final SubjectRateObserver rateObserver = new SubjectRateObserver(Duration.ofSeconds(10));
+    private final SubjectRateObserver rateObserver =
+            new SubjectRateObserver(new RateProperties(Duration.ofSeconds(10), 60, 40));
     // 09시(UTC)로 고정 — hour-of-day 신호를 결정적으로 검증한다.
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-01T09:00:00Z"), ZoneId.of("UTC"));
     private final JwtAuthGlobalFilter filter =

@@ -12,6 +12,9 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import org.junit.jupiter.api.Test;
 
+import com.ztg.gateway.config.DecisionCacheProperties;
+import com.ztg.gateway.config.RateProperties;
+
 import com.ztg.common.model.Decision;
 import com.ztg.common.model.DecisionRequest;
 import com.ztg.common.model.DecisionResponse;
@@ -30,14 +33,23 @@ class DecisionCacheTest {
     }
 
     private static DecisionCache cache(boolean enabled, LongSupplier nanoClock) {
-        return new DecisionCache(enabled, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 60, 40, 100,
-                Duration.ofSeconds(1), new SimpleMeterRegistry(), nanoClock);
+        return new DecisionCache(
+                new DecisionCacheProperties(enabled, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 100,
+                        Duration.ofSeconds(1)),
+                rate(), new SimpleMeterRegistry(), nanoClock);
     }
 
     /** sweep 검증용 소형 캐시: 크기 2, sweep 간격 지정. 그 외는 기본 캐시와 동일. */
     private static DecisionCache smallCache(Duration sweepInterval, LongSupplier nanoClock) {
-        return new DecisionCache(true, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 60, 40, 2,
-                sweepInterval, new SimpleMeterRegistry(), nanoClock);
+        return new DecisionCache(
+                new DecisionCacheProperties(true, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 2,
+                        sweepInterval),
+                rate(), new SimpleMeterRegistry(), nanoClock);
+    }
+
+    /** 레이트 관측 설정(윈도우 10s·폭주 진입>60/해제≤40 — 설정 디폴트와 동일). */
+    private static RateProperties rate() {
+        return new RateProperties(Duration.ofSeconds(10), 60, 40);
     }
 
     private static DecisionRequest request(String subject, String path) {

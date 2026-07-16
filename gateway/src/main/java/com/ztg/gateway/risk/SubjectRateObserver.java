@@ -7,8 +7,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
+import com.ztg.gateway.config.RateProperties;
 
 /**
  * 게이트웨이(PEP)가 보는 <b>주체별 요청 레이트</b>를 슬라이딩 윈도우로 센다.
@@ -34,8 +35,8 @@ public class SubjectRateObserver {
     private final LongSupplier nanoClock;
 
     @Autowired
-    public SubjectRateObserver(@Value("${ztg.gateway.rate.window:10s}") Duration window) {
-        this(window, System::nanoTime);
+    public SubjectRateObserver(RateProperties rate) {
+        this(rate.window(), System::nanoTime);
     }
 
     /** 테스트용 — 시계를 주입해 윈도우 만료를 결정적으로 검증한다. */

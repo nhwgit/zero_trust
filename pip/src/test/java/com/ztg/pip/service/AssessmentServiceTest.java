@@ -32,7 +32,7 @@ class AssessmentServiceTest {
     private final EpochPublisher capturing = (subject, epoch) -> published.add(new Published(subject, epoch));
 
     /** RiskEngine은 @Value 기본값을 코드로 재현(미신뢰40/IP변화30/폭주40/L4폭주40/업무외15, 폭주 진입>60/해제≤40, 업무 9-18). */
-    private final RiskEngine riskEngine = new RiskEngine(40, 30, 40, 40, 15, 60, 40, 9, 18);
+    private final RiskEngine riskEngine = new RiskEngine(new RiskProperties(40, 30, 40, 40, 15, 60, 40, 9, 18));
     /** 가짜 단조 시계 — ip-change hold(30s)의 유지/만료를 결정적으로 검증한다. */
     private long nowNanos = 0;
     private final SubjectRiskState state = new SubjectRiskState(Duration.ofSeconds(30), () -> nowNanos);

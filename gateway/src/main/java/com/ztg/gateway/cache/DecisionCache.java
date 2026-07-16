@@ -1,6 +1,5 @@
 package com.ztg.gateway.cache;
 
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -11,8 +10,10 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
+import com.ztg.gateway.config.DecisionCacheProperties;
+import com.ztg.gateway.config.RateProperties;
 
 import com.ztg.common.model.DecisionRequest;
 import com.ztg.common.model.DecisionResponse;
@@ -107,31 +108,21 @@ public class DecisionCache {
     private final Counter sweepReclaimed;
 
     @Autowired
-    DecisionCache(@Value("${ztg.gateway.decision-cache.enabled:true}") boolean enabled,
-                  @Value("${ztg.gateway.decision-cache.ttl:5s}") Duration ttl,
-                  @Value("${ztg.gateway.decision-cache.high-risk-ttl:1s}") Duration highRiskTtl,
-                  @Value("${ztg.gateway.decision-cache.high-risk-score:50}") int highRiskScore,
-                  @Value("${ztg.gateway.rate.burst-threshold:60}") int burstThreshold,
-                  @Value("${ztg.gateway.rate.burst-exit-threshold:40}") int burstExitThreshold,
-                  @Value("${ztg.gateway.decision-cache.max-size:10000}") int maxSize,
-                  @Value("${ztg.gateway.decision-cache.sweep-interval:1s}") Duration sweepInterval,
-                  MeterRegistry meterRegistry) {
-        this(enabled, ttl, highRiskTtl, highRiskScore, burstThreshold, burstExitThreshold, maxSize, sweepInterval,
-                meterRegistry, System::nanoTime);
+    DecisionCache(DecisionCacheProperties props, RateProperties rate, MeterRegistry meterRegistry) {
+        this(props, rate, meterRegistry, System::nanoTime);
     }
 
     /** 테스트용 — 단조 시계를 주입해 위험적응 TTL 만료를 결정적으로 검증한다. */
-    DecisionCache(boolean enabled, Duration ttl, Duration highRiskTtl, int highRiskScore, int burstThreshold,
-                  int burstExitThreshold, int maxSize, Duration sweepInterval, MeterRegistry meterRegistry,
+    DecisionCache(DecisionCacheProperties props, RateProperties rate, MeterRegistry meterRegistry,
                   LongSupplier nanoClock) {
-        this.enabled = enabled;
-        this.ttlNanos = ttl.toNanos();
-        this.highRiskTtlNanos = highRiskTtl.toNanos();
-        this.highRiskScore = highRiskScore;
+        this.enabled = props.enabled();
+        this.ttlNanos = props.ttl().toNanos();
+        this.highRiskTtlNanos = props.highRiskTtl().toNanos();
+        this.highRiskScore = props.highRiskScore();
         // 오설정(해제>진입)은 policy 생성자가 기동 시점에 fail-fast로 거른다. PIP rate-burst 판정과 같은 구현.
-        this.burstBandPolicy = new BurstBandPolicy(burstThreshold, burstExitThreshold);
-        this.maxSize = maxSize;
-        this.sweepIntervalNanos = sweepInterval.toNanos();
+        this.burstBandPolicy = new BurstBandPolicy(rate.burstThreshold(), rate.burstExitThreshold());
+        this.maxSize = props.maxSize();
+        this.sweepIntervalNanos = props.sweepInterval().toNanos();
         this.nanoClock = nanoClock;
         this.nextSweepAtNanos = new AtomicLong(nanoClock.getAsLong());   // 첫 sweep은 즉시 허용
         // 캐시 히트율을 보이는 RED 보조 지표(히트면 PDP 호출이 통째로 빠진다).
@@ -143,7 +134,7 @@ public class DecisionCache {
         this.fanoutApplied = meterRegistry.counter("ztg.pdp.cache", "result", "fanout");
         // 가득 참에서 sweep이 회수한 고아 수. 이 값이 치솟으면 키 공간을 채우는 이상 트래픽(IP 회전 등) 신호다.
         this.sweepReclaimed = meterRegistry.counter("ztg.pdp.cache.sweep.reclaimed");
-        meterRegistry.gauge("ztg.pdp.cache.size", store, java.util.Map::size);
+        meterRegistry.gauge("ztg.pdp.cache.size", store, Map::size);
     }
 
     /** 살아 있는(미만료) 결정이 있으면 반환, 없으면 {@code null}. 캐시가 꺼져 있으면 항상 {@code null}(지표 미집계). */

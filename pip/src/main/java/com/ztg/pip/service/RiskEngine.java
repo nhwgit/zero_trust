@@ -3,7 +3,6 @@ package com.ztg.pip.service;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.ztg.common.model.RiskAssessment;
@@ -11,6 +10,7 @@ import com.ztg.common.model.RiskFactor;
 import com.ztg.common.model.RiskSignals;
 import com.ztg.common.model.SubjectAttributes;
 import com.ztg.common.risk.BurstBandPolicy;
+import com.ztg.common.risk.BusinessHours;
 import com.ztg.pip.store.L4RateFlagStore;
 
 /**
@@ -44,52 +44,37 @@ public class RiskEngine {
     private final int rateL4Weight;
     private final int offHoursWeight;
     private final BurstBandPolicy burstBandPolicy;
-    private final int businessHourStart;
-    private final int businessHourEnd;
+    private final BusinessHours businessHours;
 
-    public RiskEngine(
-            @Value("${ztg.pip.risk.device-untrusted-weight:40}") int deviceUntrustedWeight,
-            @Value("${ztg.pip.risk.ip-change-weight:30}") int ipChangeWeight,
-            @Value("${ztg.pip.risk.rate-burst-weight:40}") int rateBurstWeight,
-            @Value("${ztg.pip.risk.rate-l4-weight:40}") int rateL4Weight,
-            @Value("${ztg.pip.risk.off-hours-weight:15}") int offHoursWeight,
-            @Value("${ztg.pip.risk.burst-threshold:60}") int burstThreshold,
-            @Value("${ztg.pip.risk.burst-exit-threshold:40}") int burstExitThreshold,
-            @Value("${ztg.pip.risk.business-hour-start:9}") int businessHourStart,
-            @Value("${ztg.pip.risk.business-hour-end:18}") int businessHourEnd) {
-        this.deviceUntrustedWeight = deviceUntrustedWeight;
-        this.ipChangeWeight = ipChangeWeight;
-        this.rateBurstWeight = rateBurstWeight;
-        this.rateL4Weight = rateL4Weight;
-        this.offHoursWeight = offHoursWeight;
-        // 오설정(해제>진입)은 policy 생성자가 기동 시점에 fail-fast로 거른다.
-        this.burstBandPolicy = new BurstBandPolicy(burstThreshold, burstExitThreshold);
-        this.businessHourStart = businessHourStart;
-        this.businessHourEnd = businessHourEnd;
+    public RiskEngine(RiskProperties props) {
+        this.deviceUntrustedWeight = props.deviceUntrustedWeight();
+        this.ipChangeWeight = props.ipChangeWeight();
+        this.rateBurstWeight = props.rateBurstWeight();
+        this.rateL4Weight = props.rateL4Weight();
+        this.offHoursWeight = props.offHoursWeight();
+        // 오설정(해제>진입, 끝<시작)은 각 policy record 생성자가 기동 시점에 fail-fast로 거른다.
+        this.burstBandPolicy = new BurstBandPolicy(props.burstThreshold(), props.burstExitThreshold());
+        // PDP payroll 시간 조건과 공유 구현(BusinessHours) — 두 곳의 업무시간 판정이 어긋나지 않게 한다.
+        this.businessHours = new BusinessHours(props.businessHourStart(), props.businessHourEnd());
     }
 
     /**
      * 위험을 평가한다.
      *
-     * @param base       PIP 저장 속성(baseline 위험·디바이스 신뢰)
-     * @param signals    게이트웨이가 관측한 휘발성 신호(IP·레이트·시각)
-     * @param lastSeenIp 이 주체의 직전 관측 IP({@code null}=첫 관측). IP 변화 판정에만 쓴다.
-     * @return 점수 + 기여 신호 내역(설명 가능)
-     */
-    public RiskAssessment assess(SubjectAttributes base, RiskSignals signals, String lastSeenIp) {
-        return assess(base, signals, lastSeenIp, false, null, null);
-    }
-
-    /**
-     * 위험을 평가한다 — IP 변화 hold·직전 폭주 밴드·L4 플래그 포함 버전.
-     *
+     * @param base           PIP 저장 속성(baseline 위험·디바이스 신뢰)
+     * @param signals        게이트웨이가 관측한 휘발성 신호(IP·레이트·시각). {@code null}이면 중립값
+     *                       ({@link RiskSignals#none()})으로 평가한다(신호 부재는 무가중).
+     * @param lastSeenIp     이 주체의 직전 관측 IP({@code null}=첫 관측). IP 변화 판정에만 쓴다.
      * @param ipChangeHeld   이 주체의 IP 변화 hold가 유효한가(= hold 창 안에 IP가 바뀐 적 있음).
      *                       비교 기준({@code lastSeenIp})이 갱신된 뒤에도 ip-change 가중을 창 동안 유지한다.
      * @param priorBurstBand 이 주체의 직전 폭주 밴드({@code null}=첫 관측). rate-burst 히스테리시스 판정에만 쓴다.
      * @param l4Flag         이 요청의 출발지 IP에 걸린 커널(XDP) L4 레이트 플래그({@code null}=없음/만료 → 무가중)
+     * @return 점수 + 기여 신호 내역(설명 가능)
      */
     public RiskAssessment assess(SubjectAttributes base, RiskSignals signals, String lastSeenIp,
                                  boolean ipChangeHeld, Boolean priorBurstBand, L4RateFlagStore.Flag l4Flag) {
+        // 신호 미상은 진입부에서 한 번만 중립값으로 정규화한다 — 이하 로직에 null 분기가 흩어지지 않게.
+        RiskSignals sig = signals == null ? RiskSignals.none() : signals;
         List<RiskFactor> factors = new ArrayList<>();
         int score = 0;
 
@@ -111,7 +96,7 @@ public class RiskEngine {
         // 2) IP 변화: 직전 관측과 다른 출발지 = 이동/탈취 신호. 첫 관측(lastSeenIp=null)은 변화로 보지 않는다.
         //    변화 순간이 지나도 hold 창 동안 같은 신호명·가중치로 유지된다(ipChangeHeld) — 점수가 창 안에서
         //    안정되어 epoch가 출렁이지 않고, 창이 끝날 때 한 번만 하강한다(rate-burst 히스테리시스와 같은 원리).
-        String currentIp = signals == null ? null : signals.sourceIp();
+        String currentIp = sig.sourceIp();
         boolean changedNow = currentIp != null && lastSeenIp != null && !currentIp.equals(lastSeenIp);
         if (changedNow || ipChangeHeld) {
             String reason = changedNow
@@ -123,7 +108,7 @@ public class RiskEngine {
 
         // 3) 레이트 급증: 폭주 밴드(히스테리시스 판정)면 가중 = 폭주/스크래핑 신호.
         //    임계 사이 구간에서 직전 밴드가 유지될 때도 같은 신호명·가중치라 점수가 안정된다(epoch 출렁임 방지).
-        int requests = signals == null ? 0 : signals.requestsInWindow();
+        int requests = sig.requestsInWindow();
         if (burstBand(requests, priorBurstBand)) {
             String reason = requests > burstBandPolicy.enterThreshold()
                     ? "%d requests in window exceed burst threshold %d"
@@ -146,11 +131,11 @@ public class RiskEngine {
         }
 
         // 4) 업무시간 외: 비정상 시각 접근.
-        int hour = signals == null ? 12 : signals.hourOfDay();
-        if (!withinBusinessHours(hour)) {
+        int hour = sig.hourOfDay();
+        if (!businessHours.contains(hour)) {
             factors.add(new RiskFactor("off-hours", offHoursWeight,
                     "access at hour %02d outside business hours %02d-%02d"
-                            .formatted(hour, businessHourStart, businessHourEnd)));
+                            .formatted(hour, businessHours.startHour(), businessHours.endHour())));
             score += offHoursWeight;
         }
 
@@ -169,9 +154,5 @@ public class RiskEngine {
      */
     public boolean burstBand(int requestsInWindow, Boolean priorBurstBand) {
         return burstBandPolicy.judge(requestsInWindow, priorBurstBand);
-    }
-
-    private boolean withinBusinessHours(int hour) {
-        return hour >= businessHourStart && hour < businessHourEnd;
     }
 }
