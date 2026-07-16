@@ -24,12 +24,14 @@ import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.http.server.reactive.ServerHttpRequestDecorator;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 
 import com.ztg.common.model.DecisionRequest;
 import com.ztg.common.model.DecisionResponse;
 import com.ztg.common.model.RiskSignals;
+import com.ztg.common.web.GatewayTrust;
 import com.ztg.common.web.RequestId;
 
 import reactor.core.publisher.Mono;
@@ -54,8 +56,8 @@ import reactor.core.publisher.Mono;
 @Component
 public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
-    /** 게이트웨이 경유를 증명하는 내부 신뢰 헤더. resource-api가 동일 값을 검증한다. */
-    public static final String TRUST_HEADER = "X-Gateway-Auth";
+    /** 게이트웨이 경유를 증명하는 내부 신뢰 헤더. resource-api가 동일 값을 검증한다(규약 정본은 공용 상수). */
+    public static final String TRUST_HEADER = GatewayTrust.HEADER;
     /** PDP가 DENY한 사유를 클라이언트에게 노출하는 헤더(감사/디버깅용). */
     public static final String DENY_REASON_HEADER = "X-Denied-Reason";
     /** 요청 추적 ID 헤더 — 들어온 값이 있으면 잇고, 없으면 생성해 다운스트림으로 전파한다(공용 상수). */
@@ -70,14 +72,14 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthGlobalFilter.class);
 
-    private final org.springframework.security.oauth2.jwt.ReactiveJwtDecoder jwtDecoder;
+    private final ReactiveJwtDecoder jwtDecoder;
     private final PdpClient pdpClient;
     private final String trustSecret;
     private final MeterRegistry meterRegistry;
     private final SubjectRateObserver rateObserver;
     private final Clock clock;
 
-    JwtAuthGlobalFilter(org.springframework.security.oauth2.jwt.ReactiveJwtDecoder jwtDecoder,
+    JwtAuthGlobalFilter(ReactiveJwtDecoder jwtDecoder,
                         PdpClient pdpClient,
                         @Value("${ztg.gateway.trust-secret}") String trustSecret,
                         MeterRegistry meterRegistry,
@@ -236,10 +238,8 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         return exchange.getResponse().setComplete();
     }
 
-    /** fail-close(인가): 403으로 즉시 응답하고 사유를 헤더로 노출한다(백엔드 미전달). */
+    /** fail-close(인가): 403으로 즉시 응답하고 사유를 헤더로 노출한다(백엔드 미전달). 로그는 호출부(DENY info)가 남긴다. */
     private Mono<Void> reject403(ServerWebExchange exchange, String reason) {
-        log.debug("PEP reject 403: {} ({} {})", reason,
-                exchange.getRequest().getMethod(), exchange.getRequest().getPath());
         exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
         if (reason != null) {
             // 헤더는 단일 라인 ASCII만 허용 — 개행/CR을 공백으로 치환해 헤더 분리(injection)를 막는다.

@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.ztg.common.web.GatewayTrust;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -32,7 +34,8 @@ import jakarta.servlet.http.HttpServletResponse;
  */
 public class GatewayTrustFilter extends OncePerRequestFilter {
 
-    public static final String TRUST_HEADER = "X-Gateway-Auth";
+    /** 게이트웨이가 주입하는 내부 신뢰 헤더(규약 정본은 공용 상수 — 게이트웨이 주입부와 드리프트 방지). */
+    public static final String TRUST_HEADER = GatewayTrust.HEADER;
 
     private final byte[] expectedSecret;
 
