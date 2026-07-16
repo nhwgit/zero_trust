@@ -1,6 +1,7 @@
 package com.ztg.common.model;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 주체의 위험 평가 결과 — 0~100 점수 + 그 점수를 만든 기여 신호 목록.
@@ -25,7 +26,6 @@ public record RiskAssessment(int score, List<RiskFactor> factors) {
         }
         return factors.stream()
                 .map(f -> "%s(+%d): %s".formatted(f.signal(), f.points(), f.detail()))
-                .reduce((a, b) -> a + "; " + b)
-                .orElse("");
+                .collect(Collectors.joining("; "));
     }
 }

@@ -52,6 +52,7 @@ public class HelloController {
     /** admin 역할이 있어야 접근(없으면 403). 역할 기반 인가 데모. */
     @GetMapping("/admin")
     public Map<String, Object> admin(@AuthenticationPrincipal Jwt jwt) {
+        log.info("serving /api/admin for subject={}", jwt.getClaimAsString("preferred_username"));
         return Map.of(
                 "service", "resource-api",
                 "message", "admin-only resource",

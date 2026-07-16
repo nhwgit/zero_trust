@@ -31,12 +31,15 @@ import com.ztg.common.web.RequestIdFilter;
 @Configuration
 public class SecurityConfig {
 
-    /** 게이트웨이가 주입하는 내부 신뢰 헤더의 공유 비밀(기본값은 dev용, gateway와 동일). */
-    @Value("${ztg.resource.trust-secret:ztg-gateway-trust-secret}")
-    private String trustSecret;
-
+    /**
+     * @param trustSecret 게이트웨이가 주입하는 내부 신뢰 헤더의 공유 비밀. 코드 기본값을 두지 않는다 —
+     *                    설정 누락이 공개 저장소에 노출된 기본 비밀로 조용히 뜨는 대신 기동 실패(fail-fast)하게
+     *                    한다(gateway 쪽 {@code ztg.gateway.trust-secret}과 동일 원칙; dev 기본값은 yml 몫).
+     */
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                            @Value("${ztg.resource.trust-secret}") String trustSecret)
+            throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

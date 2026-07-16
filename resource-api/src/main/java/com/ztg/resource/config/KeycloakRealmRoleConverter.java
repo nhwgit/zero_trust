@@ -3,7 +3,6 @@ package com.ztg.resource.config;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.security.core.GrantedAuthority;
@@ -33,8 +32,8 @@ public class KeycloakRealmRoleConverter implements Converter<Jwt, Collection<Gra
         }
         // hasRole("admin")은 "ROLE_admin" 권한을 요구하므로 접두어를 붙인다.
         return roleList.stream()
-                .map(Object::toString)
-                .map(role -> (GrantedAuthority) new SimpleGrantedAuthority("ROLE_" + role))
-                .collect(Collectors.toUnmodifiableList());
+                .map(role -> "ROLE_" + role)
+                .<GrantedAuthority>map(SimpleGrantedAuthority::new)
+                .toList();
     }
 }
