@@ -3,6 +3,7 @@ package com.ztg.pip.service;
 import java.time.Clock;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import com.ztg.pip.fanout.EpochPublisher;
 import com.ztg.pip.store.L4RateFlagStore;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import com.ztg.common.model.PipAssessment;
 import com.ztg.common.model.RiskAssessment;
+import com.ztg.common.model.RiskFactor;
 import com.ztg.common.model.RiskSignals;
 import com.ztg.common.model.SubjectAttributes;
 
@@ -23,7 +25,7 @@ import com.ztg.common.model.SubjectAttributes;
  * 점수를 내고, 주체별 {@link SubjectRiskState}로 epoch를 갱신해 한 번에 {@link PipAssessment}로 묶는다.
  *
  * <p>순서가 의미를 가진다: ① 직전 IP·IP 변화 hold·직전 폭주 밴드를 <b>먼저</b> 읽어 IP 변화·히스테리시스를
- * 판정하고 점수를 낸 뒤, ② 점수로 epoch를 갱신(변화 시 bump)하고, ③ 이번 IP·이번 밴드를 직전 값으로 덮는다
+ * 판정하고 점수를 낸 뒤, ② 점수·팩터 구성으로 epoch를 갱신(변화 시 bump)하고, ③ 이번 IP·이번 밴드를 직전 값으로 덮는다
  * (다음 요청의 비교 기준 — IP가 바뀌었으면 이때 hold가 시작된다). 점수 산출(순수)과 상태 갱신(부수효과)을
  * 이 한 곳에 모아 컨트롤러는 얇게 유지한다.
  *
@@ -66,6 +68,16 @@ public class AssessmentService {
     }
 
     public PipAssessment assess(String subject, RiskSignals signals) {
+        return assess(subject, signals, true);
+    }
+
+    /**
+     * 평가 본체. {@code recordBand=false}는 L4 재평가 전용 — 그 경로의 {@code requestsInWindow=0}은
+     * "L7 레이트 미상"이지 실측 0이 아니므로, 밴드 기준(히스테리시스)을 가짜 0으로 덮으면 실제 폭주 중인
+     * 주체의 밴드가 다음 실요청 관측과 발산한다. 미상 신호는 비교 기준을 갱신하지 않는다({@code recordIp}가
+     * null/blank IP를 무시하는 것과 같은 원칙).
+     */
+    private PipAssessment assess(String subject, RiskSignals signals, boolean recordBand) {
         RiskSignals effective = signals == null ? RiskSignals.none() : signals;
 
         SubjectAttributes attrs = store.get(subject);
@@ -77,10 +89,14 @@ public class AssessmentService {
         RiskAssessment risk = riskEngine.assess(attrs, effective, lastSeenIp, ipChangeHeld, priorBand, l4Flag);
 
         long before = state.currentEpoch(subject);                     // bump 여부 판정 기준
-        long epoch = state.recordScore(subject, risk.score());         // ② 점수 변화 시 epoch bump
+        // ② 점수 또는 팩터 구성 변화 시 epoch bump — 등점 팩터 교체(rate-burst↔rate-l4)도 무효화 대상.
+        long epoch = state.recordScore(subject, risk.score(),
+                risk.factors().stream().map(RiskFactor::signal).collect(Collectors.toSet()));
         state.recordIp(subject, effective.sourceIp());                 // ③ 다음 비교 기준 갱신(변화면 hold 시작)
-        // ③ 이번 밴드 기록 — 점수에 반영된 판정과 같은 순수 함수를 같은 입력으로 다시 불러 항상 일치한다.
-        state.recordBurstBand(subject, riskEngine.burstBand(effective.requestsInWindow(), priorBand));
+        if (recordBand) {
+            // ③ 이번 밴드 기록 — 점수에 반영된 판정과 같은 순수 함수를 같은 입력으로 다시 불러 항상 일치한다.
+            state.recordBurstBand(subject, riskEngine.burstBand(effective.requestsInWindow(), priorBand));
+        }
 
         // epoch가 올랐으면(위험 변화) 모든 게이트웨이에 fan-out해 동시 무효화를 유발한다.
         // 단조 학습이라 중복/순서뒤바뀜 전파도 무해(게이트웨이가 max로만 채택).
@@ -99,6 +115,8 @@ public class AssessmentService {
      * <p>재평가 신호는 "PIP가 지금 아는 것"만 싣는다: 출발지 IP는 신호의 IP(직전 관측과 같아 IP 변화 무가중),
      * L7 레이트는 0(커널 신호는 L7 요청 수를 모름 — rate.l4와 rate.l7 분리 원칙), 시각은 현재.
      * 다음 실제 요청이 오면 게이트웨이가 진짜 휘발성 신호로 다시 평가한다.
+     * 단 이 0은 <b>미상이지 실측이 아니므로</b> 밴드 기준은 기록하지 않는다({@code recordBand=false}) —
+     * 실제 폭주 중인 주체의 히스테리시스 기준이 가짜 0으로 오염되는 것을 막는다.
      *
      * @return 재평가된 주체 목록(신호 IP를 쓰는 주체가 없으면 빈 목록 — 플래그는 남아 다음 평가에 반영)
      */
@@ -107,7 +125,7 @@ public class AssessmentService {
         List<String> affected = state.subjectsByLastSeenIp(sourceIp);
         int hour = LocalTime.now(clock).getHour();
         for (String subject : affected) {
-            PipAssessment reassessed = assess(subject, new RiskSignals(sourceIp, 0, hour));
+            PipAssessment reassessed = assess(subject, new RiskSignals(sourceIp, 0, hour), false);
             log.info("l4-rate signal ip={} syns={}/{}s -> reassess subject={} score={} epoch={}",
                     sourceIp, synsInWindow, windowSeconds, subject,
                     reassessed.risk().score(), reassessed.epoch());

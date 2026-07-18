@@ -3,12 +3,13 @@ package com.ztg.pip.store;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
 /**
- * 주체 위험 상태(직전 IP + IP 변화 hold + epoch) 검증 — 기록/조회/리셋, 미상 IP 무시, 점수 변화 시 epoch bump,
- * hold의 시작/연장/만료(가짜 단조 시계로 결정적).
+ * 주체 위험 상태(직전 IP + IP 변화 hold + epoch) 검증 — 기록/조회/리셋, 미상 IP 무시,
+ * 점수·팩터 구성 변화 시 epoch bump, hold의 시작/연장/만료(가짜 단조 시계로 결정적).
  */
 class SubjectRiskStateTest {
 
@@ -21,6 +22,11 @@ class SubjectRiskStateTest {
         nowNanos += d.toNanos();
     }
 
+    /** 점수만 관심 있는 케이스용 — 팩터 구성은 고정해 bump 판정이 점수 축으로만 결정되게 한다. */
+    private long recordScore(String subject, int score) {
+        return state.recordScore(subject, score, Set.of("baseline"));
+    }
+
     @Test
     void records_and_reads_last_seen_ip() {
         assertThat(state.lastSeenIp("alice")).isNull();   // 첫 관측 전
@@ -31,24 +37,34 @@ class SubjectRiskStateTest {
     @Test
     void first_score_sets_baseline_without_bumping_epoch() {
         assertThat(state.currentEpoch("alice")).isZero();           // 관측 전 epoch 0
-        assertThat(state.recordScore("alice", 10)).isZero();        // 첫 점수는 기준 설정, bump 없음
+        assertThat(recordScore("alice", 10)).isZero();        // 첫 점수는 기준 설정, bump 없음
         assertThat(state.currentEpoch("alice")).isZero();
     }
 
     @Test
     void unchanged_score_keeps_epoch_changed_score_bumps_it() {
-        state.recordScore("alice", 10);
-        assertThat(state.recordScore("alice", 10)).isZero();        // 동일 점수: 안정 → 유지
-        assertThat(state.recordScore("alice", 80)).isEqualTo(1L);   // 위험 상승: 능동 무효화 bump
-        assertThat(state.recordScore("alice", 80)).isEqualTo(1L);   // 다시 동일: 유지
-        assertThat(state.recordScore("alice", 10)).isEqualTo(2L);   // 위험 하강도 변화 → bump
+        recordScore("alice", 10);
+        assertThat(recordScore("alice", 10)).isZero();        // 동일 점수: 안정 → 유지
+        assertThat(recordScore("alice", 80)).isEqualTo(1L);   // 위험 상승: 능동 무효화 bump
+        assertThat(recordScore("alice", 80)).isEqualTo(1L);   // 다시 동일: 유지
+        assertThat(recordScore("alice", 10)).isEqualTo(2L);   // 위험 하강도 변화 → bump
+    }
+
+    @Test
+    void same_score_with_different_factor_set_bumps_epoch() {
+        // 등점 팩터 교체(rate-burst 40 ↔ rate-l4 40, L4 재평가 경로)는 점수 비교만으론 보이지 않는
+        // "위험 성격" 변화다 — 증거가 바뀌었으면 캐시된 결정도 다시 물어야 하므로 bump 대상.
+        state.recordScore("alice", 50, Set.of("baseline", "rate-burst"));
+        assertThat(state.recordScore("alice", 50, Set.of("baseline", "rate-l4"))).isEqualTo(1L);
+        // 같은 점수 + 같은 구성 반복은 종전대로 안정(불필요한 무효화 없음).
+        assertThat(state.recordScore("alice", 50, Set.of("rate-l4", "baseline"))).isEqualTo(1L);
     }
 
     @Test
     void epoch_bump_preserves_last_seen_ip() {
-        state.recordScore("alice", 10);
+        recordScore("alice", 10);
         state.recordIp("alice", "1.2.3.4");
-        state.recordScore("alice", 80);                              // bump
+        recordScore("alice", 80);                              // bump
         assertThat(state.lastSeenIp("alice")).isEqualTo("1.2.3.4");  // IP 기준은 유지된다
         assertThat(state.currentEpoch("alice")).isEqualTo(1L);
     }
@@ -115,27 +131,27 @@ class SubjectRiskStateTest {
     void burst_band_record_preserves_ip_epoch_score_and_hold() {
         state.recordIp("alice", "1.2.3.4");
         state.recordIp("alice", "9.9.9.9");                          // hold 시작
-        state.recordScore("alice", 10);
-        state.recordScore("alice", 80);                              // bump → epoch 1
+        recordScore("alice", 10);
+        recordScore("alice", 80);                              // bump → epoch 1
         state.recordBurstBand("alice", true);
         assertThat(state.lastSeenIp("alice")).isEqualTo("9.9.9.9");  // 다른 상태를 덮지 않는다
         assertThat(state.currentEpoch("alice")).isEqualTo(1L);
         assertThat(state.ipChangeHeld("alice")).isTrue();            // hold도 유지
-        assertThat(state.recordScore("alice", 80)).isEqualTo(1L);    // 점수 기준도 유지(동일 점수 → bump 없음)
+        assertThat(recordScore("alice", 80)).isEqualTo(1L);    // 점수 기준도 유지(동일 점수 → bump 없음)
     }
 
     @Test
     void score_record_preserves_hold() {
         state.recordIp("alice", "1.2.3.4");
         state.recordIp("alice", "9.9.9.9");                          // hold 시작
-        state.recordScore("alice", 40);
+        recordScore("alice", 40);
         assertThat(state.ipChangeHeld("alice")).isTrue();
     }
 
     @Test
     void evict_resets_risk_context_but_preserves_epoch() {
-        state.recordScore("alice", 10);
-        state.recordScore("alice", 80);                              // bump → epoch 1
+        recordScore("alice", 10);
+        recordScore("alice", 80);                              // bump → epoch 1
         state.recordIp("alice", "1.2.3.4");
         state.recordIp("alice", "9.9.9.9");                          // hold 시작
         state.recordBurstBand("alice", true);
@@ -146,7 +162,7 @@ class SubjectRiskStateTest {
         // epoch는 보존 — GW가 단조(max)로 학습하므로 되돌리면 조회(옛 큰 epoch)/적재(새 작은 epoch)가
         // 영구히 갈려 그 주체가 캐시 불능이 된다. 세대 토큰은 뒤로 가지 않는다.
         assertThat(state.currentEpoch("alice")).isEqualTo(1L);
-        assertThat(state.recordScore("alice", 50)).isEqualTo(1L);    // 리셋 후 첫 점수 = 기준 설정(bump 없음)
+        assertThat(recordScore("alice", 50)).isEqualTo(1L);    // 리셋 후 첫 점수 = 기준 설정(bump 없음)
     }
 
     @Test

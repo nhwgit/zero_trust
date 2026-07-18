@@ -3,6 +3,7 @@ package com.ztg.pip.store;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
@@ -25,13 +26,15 @@ import org.springframework.stereotype.Component;
  * hold는 신호를 시간 창으로 늘려 이를 막는다. 창이 지나면 자동 소멸(가역성 — {@link L4RateFlagStore}의
  * rate-l4 hold와 같은 논리). 창 안에서 또 바뀌면 만료를 연장한다(회전 = 지속 신호).
  *
- * <p><b>epoch(능동 무효화 토큰):</b> 위험 점수가 직전과 달라지면 epoch를 +1 한다.
+ * <p><b>epoch(능동 무효화 토큰):</b> 위험 점수 <b>또는 기여 팩터 구성</b>이 직전과 달라지면 epoch를 +1 한다.
  * epoch는 결정에 piggyback돼 게이트웨이로 가고, 게이트웨이는 새 epoch를 학습해 옛 캐시를 버린다
  * (캐시 키에 epoch가 포함돼 옛 엔트리는 더는 조회되지 않는다) → 같은 세션에서 <b>재로그인 없이</b>
  * 위험 변화가 ALLOW→DENY로 반영된다.
  *
  * <p>설계 메모: 점수 "변화"를 트리거로 삼아 PIP는 PDP의 임계값을 몰라도 된다(관심사 분리). 같은 점수
- * 반복은 bump하지 않아 안정 상태에선 캐시가 유지된다. {@link #evict}로 데모 리셋 — 단, <b>epoch는 보존</b>한다:
+ * 반복은 bump하지 않아 안정 상태에선 캐시가 유지된다. 팩터 구성을 함께 보는 이유: 가중치가 같은 팩터의
+ * 교체(예: rate-burst 40 ↔ rate-l4 40, L4 재평가 경로)는 점수가 동률이라 점수만으론 위험의 <b>성격</b> 변화를
+ * 놓친다 — 증거가 바뀌었으면 캐시된 결정도 다시 물어야 한다(팩터 이름 집합 비교, 점수 비교와 OR). {@link #evict}로 데모 리셋 — 단, <b>epoch는 보존</b>한다:
  * 게이트웨이가 epoch를 단조(max)로만 학습하므로 여기서 0으로 되돌리면 게이트웨이는 계속 옛(더 큰) 세대로
  * 조회하고 적재는 새(작은) 세대로 갈려 그 주체가 영구 캐시 미스가 된다. 세대 토큰은 뒤로 가지 않는다.
  * in-memory(단일 PIP) — 다중화는 Redis 등 외부 저장소 확장으로 미룬다.
@@ -40,36 +43,38 @@ import org.springframework.stereotype.Component;
 public class SubjectRiskState {
 
     /**
-     * 주체별 위험 맥락 스냅샷(불변). {@code lastScore=null}=점수 미관측, {@code lastBurstBand=null}=밴드 미관측,
-     * {@code ipChangeHoldUntilNanos=null}=활성 hold 없음(변화 미관측 또는 만료 후 새 변화 없음).
+     * 주체별 위험 맥락 스냅샷(불변). {@code lastScore=null}=점수 미관측(이때 {@code lastFactors}도 null),
+     * {@code lastBurstBand=null}=밴드 미관측, {@code ipChangeHoldUntilNanos=null}=활성 hold 없음
+     * (변화 미관측 또는 만료 후 새 변화 없음).
      *
      * <p>필드 하나만 바꾼 새 스냅샷은 {@code with*} 메서드로 만든다 — 위치 기반 {@code new State(...)}를 이
      * record 안에 가둬, 호출부는 "무엇이 바뀌는가"만 드러내고 필드 순서 실수(footgun)를 한 곳으로 모은다.
      */
-    private record State(String lastSeenIp, long epoch, Integer lastScore, Boolean lastBurstBand,
-                         Long ipChangeHoldUntilNanos) {
+    private record State(String lastSeenIp, long epoch, Integer lastScore, Set<String> lastFactors,
+                         Boolean lastBurstBand, Long ipChangeHoldUntilNanos) {
 
         /** 모든 필드가 빈 초기 스냅샷 — 첫 관측(주체 미기록)의 출발점. 불변이라 공유해도 안전. */
-        static final State EMPTY = new State(null, 0L, null, null, null);
+        static final State EMPTY = new State(null, 0L, null, null, null, null);
 
         /** 이번 IP와 hold 만료 시각을 반영한다(IP 변화 판정·hold 시작은 호출부가 계산해 넘긴다). */
         State withIp(String ip, Long holdUntilNanos) {
-            return new State(ip, epoch, lastScore, lastBurstBand, holdUntilNanos);
+            return new State(ip, epoch, lastScore, lastFactors, lastBurstBand, holdUntilNanos);
         }
 
-        /** 이번 점수를 반영한다. {@code bump=true}(위험 변화)면 epoch를 +1 한다(능동 무효화 토큰). */
-        State withScore(int score, boolean bump) {
-            return new State(lastSeenIp, bump ? epoch + 1 : epoch, score, lastBurstBand, ipChangeHoldUntilNanos);
+        /** 이번 점수·팩터 구성을 반영한다. {@code bump=true}(위험 변화)면 epoch를 +1 한다(능동 무효화 토큰). */
+        State withScore(int score, Set<String> factors, boolean bump) {
+            return new State(lastSeenIp, bump ? epoch + 1 : epoch, score, factors, lastBurstBand,
+                    ipChangeHoldUntilNanos);
         }
 
         /** 이번 폭주 밴드를 반영한다(다음 평가의 히스테리시스 기준). */
         State withBand(boolean band) {
-            return new State(lastSeenIp, epoch, lastScore, band, ipChangeHoldUntilNanos);
+            return new State(lastSeenIp, epoch, lastScore, lastFactors, band, ipChangeHoldUntilNanos);
         }
 
         /** 위험 맥락을 비우되 epoch만 보존한다(데모 리셋 — {@link #evict}의 단조성 보존 근거 참고). */
         State resetKeepingEpoch() {
-            return new State(null, epoch, null, null, null);
+            return new State(null, epoch, null, null, null, null);
         }
     }
 
@@ -135,19 +140,24 @@ public class SubjectRiskState {
     }
 
     /**
-     * 이번 위험 점수를 반영하고 현재 epoch를 반환한다. 점수가 직전과 <b>달라졌을 때만</b> epoch를 +1 한다
-     * (능동 무효화). 첫 관측은 bump 없이 점수만 기록(epoch 0)한다 — 변화가 아니라 기준 설정이므로.
+     * 이번 위험 점수·기여 팩터 구성을 반영하고 현재 epoch를 반환한다. 점수 <b>또는 팩터 이름 집합</b>이
+     * 직전과 달라졌을 때만 epoch를 +1 한다(능동 무효화). 팩터 집합을 함께 보는 이유: 가중치가 같은 팩터의
+     * 교체(rate-burst 40 ↔ rate-l4 40 등)는 점수 동률이라 점수 비교만으론 위험의 성격 변화를 놓친다.
+     * 첫 관측은 bump 없이 기록만 한다(epoch 0) — 변화가 아니라 기준 설정이므로.
      *
-     * @param subject 대상 주체
-     * @param score   이번에 산출된 위험 점수(0~100)
+     * @param subject     대상 주체
+     * @param score       이번에 산출된 위험 점수(0~100)
+     * @param factorNames 점수에 기여한 팩터 이름 집합({@code null}=빈 집합으로 취급)
      * @return 반영 후 주체의 현재 epoch
      */
-    public long recordScore(String subject, int score) {
+    public long recordScore(String subject, int score, Set<String> factorNames) {
+        Set<String> factors = factorNames == null ? Set.of() : Set.copyOf(factorNames);
         State updated = states.compute(subject, (k, s) -> {
             State cur = s == null ? State.EMPTY : s;
-            // 첫 관측(lastScore=null)·동일 점수는 기준 설정/유지라 bump 없음. 점수가 달라졌을 때만 능동 무효화.
-            boolean bump = cur.lastScore() != null && cur.lastScore() != score;
-            return cur.withScore(score, bump);
+            // 첫 관측(lastScore=null)·동일 점수+동일 구성은 기준 설정/유지라 bump 없음.
+            boolean bump = cur.lastScore() != null
+                    && (cur.lastScore() != score || !factors.equals(cur.lastFactors()));
+            return cur.withScore(score, factors, bump);
         });
         return updated.epoch();
     }

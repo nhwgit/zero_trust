@@ -90,6 +90,33 @@ class AssessmentServiceTest {
     }
 
     @Test
+    void l4_signal_during_burst_preserves_band_and_bumps_epoch_on_factor_swap() {
+        // H1 시나리오: 실제 폭주 중인 주체에 L4 신호가 겹칠 때 — 재평가의 requestsInWindow=0은
+        // "L7 레이트 미상"이지 실측이 아니므로 밴드 기준을 오염시키면 안 되고, rate-burst(+40)→rate-l4(+40)
+        // 등점 팩터 교체도 위험 성격 변화라 epoch bump(→fan-out)가 나야 한다.
+        // 1) alice가 폭주 중(70>60): score 50(baseline 10 + rate-burst 40), 밴드 true, epoch 0(첫 관측).
+        PipAssessment burst = service.assess("alice", new RiskSignals("1.1.1.1", 70, 12));
+        assertThat(burst.risk().score()).isEqualTo(50);
+        assertThat(state.lastBurstBand("alice")).isTrue();
+
+        // 2) 같은 IP에 L4 신호 → 재평가에서 rate-burst가 빠지고 rate-l4가 들어와 점수 동률(50)의
+        //    팩터 교체. 종전 "점수 변화" 규칙이면 bump 누락(무효화 미발생) — 구성 변화 규칙으로 bump.
+        service.applyL4RateSignal("1.1.1.1", 87, 5);
+        assertThat(state.currentEpoch("alice")).isEqualTo(1L);
+        assertThat(published).containsExactly(new Published("alice", 1L));   // fan-out도 발화
+        // 가짜 0이 히스테리시스 기준을 덮지 않는다(밴드 보존 — 실요청 관측과의 발산 방지).
+        assertThat(state.lastBurstBand("alice")).isTrue();
+
+        // 3) 다음 실요청이 사이 구간(50)이어도 보존된 밴드로 rate-burst가 유지된다:
+        //    10 + rate-burst 40 + rate-l4 40(플래그 생존) = 90. 밴드가 false로 오염됐다면
+        //    50 ≤ 진입 임계 60이라 rate-burst가 빠져 50이 됐을 것(발산의 증상).
+        PipAssessment next = service.assess("alice", new RiskSignals("1.1.1.1", 50, 12));
+        assertThat(next.risk().score()).isEqualTo(90);
+        assertThat(next.risk().explain()).contains("rate-burst").contains("rate-l4");
+        assertThat(next.epoch()).isEqualTo(2L);   // 점수·구성 변화 → 정상 bump
+    }
+
+    @Test
     void l4_rate_signal_for_unseen_ip_touches_no_subject_but_holds_flag() {
         // 신호 IP를 쓰는 주체가 없으면 재평가 대상 없음 — 다만 플래그는 남아, 그 IP로 처음 오는
         // 평가부터 가중된다(신호가 로그인보다 먼저 도착하는 경합에도 안전).
