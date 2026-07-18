@@ -95,7 +95,7 @@ zero-trust-gateway/
 | `baseline` | 주체 기본 신뢰도 (등록 사용자 낮음 / 미등록 높음) | 주체별 |
 | `device-untrusted` | 관리되지 않는 단말 | 40 |
 | `ip-change` | 직전 관측과 다른 출발지 IP (이동·탈취 신호) — 변화 후 hold 창(기본 30초) 동안 유지 | 30 |
-| `rate-burst` | 슬라이딩 윈도우 내 요청수가 폭주 밴드 (진입>60·해제≤40 히스테리시스, §4.3) | 40 |
+| `rate-burst` | 슬라이딩 윈도우 내 요청수가 폭주 밴드 (진입>60·해제≤40 히스테리시스, §4.3 · 다중 GW에선 Redis 전역 집계, §4.4) | 40 |
 | `rate-l4` | 커널(XDP)이 관측한 L4 SYN 폭주 — 토큰 없는 플러드도 잡힘 (§5.3) | 40 |
 | `off-hours` | 업무시간 외 접근 | 15 |
 
@@ -168,15 +168,35 @@ X-Denied-Reason: risk score 80 >= threshold 80 [baseline(+10): stored baseline r
 비면 — 다음 재평가에서 다시 200으로 복귀한다. 영구 차단이 아니라 위험에 적응하는
 가역적 결정이다.
 
-### 4.4 다중 게이트웨이 fan-out (Redis pub/sub)
+### 4.4 다중 게이트웨이 — fan-out과 전역 레이트 집계 (Redis)
 
-게이트웨이가 여러 대인 구성에서는 위험을 유발하지 않은 노드가 TTL 동안 옛 ALLOW를 캐시
+게이트웨이가 여러 대인 구성에서는 단일 노드 설계의 전제 두 개가 깨진다. Redis가 두 역할로
+그 간극을 메운다 (같은 플래그 `ztg.fanout.enabled` 하나로 함께 켜진다 — "게이트웨이가 여러
+대"라는 같은 사실이 둘 다 요구하기 때문이다).
+
+**무효화 전파 (pub/sub fan-out).** 위험을 유발하지 않은 노드는 TTL 동안 옛 ALLOW를 캐시
 히트로 낼 수 있다. 그래서 위험 정보의 권위자인 PIP가 epoch 상승 시 Redis 채널로 발행하고,
 모든 게이트웨이가 이를 구독해 즉시 키-아웃한다.
 
 - 기본값은 OFF다 (`ztg.fanout.enabled=false`). 단일 노드나 테스트 환경은 Redis 없이 동작한다.
 - 전달 보장은 at-most-once로 충분하다고 판단했다. TTL과 lazy 학습이 백스톱이라 한 번 놓쳐도 곧 수렴하며, 가용성을 우선해 publish 실패는 무시한다.
 - Kafka 대신 Redis pub/sub을 쓴 이유: 지속성·재생 요구가 없어 이 규모에는 과하다.
+
+**전역 레이트 집계 (공유 슬라이딩 윈도우).** 레이트 카운터가 노드-로컬이면 같은 주체의
+폭주가 노드마다 1/N로 희석돼 어느 노드도 임계를 못 넘고(전역 폭주 미검출), 노드마다 다른
+카운트가 PIP의 주체당 밴드 상태에 섞여 비대칭 라우팅 시 밴드가 진동한다(epoch 진동 →
+fan-out이 전 노드 캐시를 계속 키-아웃하는 증폭 역전). 그래서 다중 게이트웨이 모드에서는
+레이트 관측 소유권을 Redis 공유 슬라이딩 윈도우로 승격한다 — 주체별 zset에 "윈도우 밖
+제거→기록→TTL 갱신→카운트"를 Lua 원자 스크립트로 묶어 요청당 1왕복, 윈도우 시계는 노드
+벽시계가 아니라 Redis `TIME`이다(노드 간 시계 편차 배제). 모든 노드가 같은 전역 카운트를
+보므로 희석과 밴드 진동이 근원에서 사라진다.
+
+- Redis 장애 시엔 노드-로컬 카운터로 강등한다(fail-degraded — 레이트는 보조 위험신호라
+  전면 차단이 되면 가용성 역전). 로컬 카운터는 평상시에도 함께 세어(warm standby) 강등
+  순간 빈 윈도우로 시작하지 않고, 한 요청은 어느 경로로든 정확히 한 번만 계상된다.
+- sticky 라우팅/consistent hashing으로도 완화되지만 정확성 메커니즘으로는 부족해 기각했다
+  — 라우팅 입력(IP·쿠키·토큰)을 폭주하는 쪽이 통제하고, failover 순간 콜드 카운터가 밴드
+  진동을 재발시킨다. sticky의 자리는 캐시 지역성 최적화(보완재)다.
 
 ---
 
@@ -290,7 +310,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/hello
 | `smoke-phase3.ps1` | PDP/PIP 정책 분리 (payroll 조건부 허용) |
 | `smoke-phase4-failclose.ps1` | PDP 장애 시 fail-close 차단 |
 | `smoke-d1.ps1` | 재로그인 없이 ALLOW→DENY (새 IP·폭주 주입) |
-| `smoke-d1-fanout.ps1` | 다중 GW Redis fan-out 무효화 |
+| `smoke-d1-fanout.ps1` | 다중 GW Redis fan-out 무효화 + 전역 레이트 집계 (폭주를 두 GW에 반씩 나눠도 검출) |
 | `smoke-mtls.ps1` | 서비스간 mTLS |
 | `loadtest.js` (k6) | 캐시 before/after 처리량·p99 |
 
@@ -298,7 +318,8 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/hello
 
 ## 7. 검증
 
-- **단위 테스트:** 위험점수 가중합, 정책 결정(ALLOW/DENY), 캐시 epoch 키-아웃, fan-out 코덱 라운드트립.
+- **단위 테스트:** 위험점수 가중합, 정책 결정(ALLOW/DENY), 캐시 epoch 키-아웃, fan-out 코덱 라운드트립,
+  공유 레이트 집계의 로컬 폴백(fail-degraded·단일 계상).
 - **e2e:** 정상 호출 ALLOW → IP 변경/폭주 주입 → 다음 호출 DENY (재로그인 없이).
 - 전체 회귀는 `./gradlew build` 하나로 수행한다 (검증 실패 = 빌드 실패).
 

@@ -1,7 +1,7 @@
 package com.ztg.gateway.filter;
 
 import com.ztg.gateway.client.PdpClient;
-import com.ztg.gateway.risk.SubjectRateObserver;
+import com.ztg.gateway.risk.RateObserver;
 import java.net.InetSocketAddress;
 import java.time.Clock;
 import java.time.LocalTime;
@@ -76,14 +76,14 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     private final PdpClient pdpClient;
     private final String trustSecret;
     private final MeterRegistry meterRegistry;
-    private final SubjectRateObserver rateObserver;
+    private final RateObserver rateObserver;
     private final Clock clock;
 
     JwtAuthGlobalFilter(ReactiveJwtDecoder jwtDecoder,
                         PdpClient pdpClient,
                         @Value("${ztg.gateway.trust-secret}") String trustSecret,
                         MeterRegistry meterRegistry,
-                        SubjectRateObserver rateObserver,
+                        RateObserver rateObserver,
                         Clock clock) {
         this.jwtDecoder = jwtDecoder;
         this.pdpClient = pdpClient;
@@ -119,18 +119,10 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         String path = exchange.getRequest().getPath().value();
         String requestId = requestIdOf(exchange);
         // PEP가 본 요청 맥락(출발지 IP·레이트·시각)을 위험 신호로 실어 PDP→PIP까지 전달한다.
-        DecisionRequest request = new DecisionRequest(subject, method, path, observeRiskContext(exchange, subject));
-
-        // PDP 호출 지연을 측정한다(p99는 application.yml의 히스토그램 설정으로 산출).
-        Timer.Sample sample = Timer.start(meterRegistry);
-        // 요청ID를 헤더로 실어 PDP/PIP 로그까지 같은 ID로 묶는다(분산 추적).
-        return pdpClient.decide(request, requestId)
-                .doOnNext(d -> sample.stop(meterRegistry.timer("ztg.pdp.requests", "outcome", "success")))
-                // fail-close: PDP 호출 실패는 "판단 불가"이므로 DENY로 환산해 403 처리한다.
-                .onErrorResume(e -> {
-                    sample.stop(meterRegistry.timer("ztg.pdp.requests", "outcome", "error"));
-                    return Mono.just(DecisionResponse.deny(PDP_UNAVAILABLE_PREFIX + e.getMessage()));
-                })
+        // 다중 GW 모드의 레이트 관측은 Redis 공유 집계(비동기 I/O)라 맥락 구성부터 리액티브 체인이다.
+        return observeRiskContext(exchange, subject)
+                .map(context -> new DecisionRequest(subject, method, path, context))
+                .flatMap(request -> decide(request, requestId))
                 .flatMap(decision -> {
                     if (decision.isAllowed()) {
                         meterRegistry.counter("ztg.authz.decisions", "decision", "allow", "cause", "none").increment();
@@ -145,6 +137,19 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                     log.info("authz decision=DENY cause={} subject={} method={} path={} reason=\"{}\" requestId={}",
                             cause, subject, method, path, decision.reason(), requestId);
                     return reject403(exchange, decision.reason());
+                });
+    }
+
+    /** PDP 호출(지연 측정 포함). fail-close: 호출 실패는 "판단 불가"이므로 DENY로 환산한다. */
+    private Mono<DecisionResponse> decide(DecisionRequest request, String requestId) {
+        // PDP 호출 지연을 측정한다(p99는 application.yml의 히스토그램 설정으로 산출).
+        Timer.Sample sample = Timer.start(meterRegistry);
+        // 요청ID를 헤더로 실어 PDP/PIP 로그까지 같은 ID로 묶는다(분산 추적).
+        return pdpClient.decide(request, requestId)
+                .doOnNext(d -> sample.stop(meterRegistry.timer("ztg.pdp.requests", "outcome", "success")))
+                .onErrorResume(e -> {
+                    sample.stop(meterRegistry.timer("ztg.pdp.requests", "outcome", "error"));
+                    return Mono.just(DecisionResponse.deny(PDP_UNAVAILABLE_PREFIX + e.getMessage()));
                 });
     }
 
@@ -178,18 +183,23 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
      * </ul>
      *
      * 신호 부재(IP 미상 등)는 키를 비워 두고, PDP/PIP 쪽에서 중립값으로 폴백한다(부재는 가중 아님).
+     *
+     * <p>반환이 Mono인 이유: 레이트 관측이 다중 GW 모드에선 Redis 공유 집계(네트워크 I/O)라
+     * 이벤트 루프를 막지 않는 리액티브 체인이어야 한다(단일 GW 기본은 즉시 완료되는 로컬 카운터).
      */
-    private Map<String, String> observeRiskContext(ServerWebExchange exchange, String subject) {
-        Map<String, String> context = new LinkedHashMap<>();
-        String sourceIp = clientIp(exchange.getRequest());
-        if (sourceIp != null) {
-            context.put(RiskSignals.CTX_SOURCE_IP, sourceIp);
-        }
-        // 게이트웨이는 캐시 히트 포함 모든 요청을 보므로 여기서 레이트를 센다(권위 관측자).
-        int requestsInWindow = rateObserver.record(subject);
-        context.put(RiskSignals.CTX_REQUESTS_IN_WINDOW, Integer.toString(requestsInWindow));
-        context.put(RiskSignals.CTX_HOUR_OF_DAY, Integer.toString(LocalTime.now(clock).getHour()));
-        return context;
+    private Mono<Map<String, String>> observeRiskContext(ServerWebExchange exchange, String subject) {
+        // 게이트웨이는 캐시 히트 포함 모든 요청을 보므로 여기서 레이트를 센다(권위 관측자 —
+        // 소유권은 RateObserver 구현이 정한다: 단일 GW=노드-로컬, 다중 GW=Redis 공유 집계).
+        return rateObserver.observe(subject).map(requestsInWindow -> {
+            Map<String, String> context = new LinkedHashMap<>();
+            String sourceIp = clientIp(exchange.getRequest());
+            if (sourceIp != null) {
+                context.put(RiskSignals.CTX_SOURCE_IP, sourceIp);
+            }
+            context.put(RiskSignals.CTX_REQUESTS_IN_WINDOW, Integer.toString(requestsInWindow));
+            context.put(RiskSignals.CTX_HOUR_OF_DAY, Integer.toString(LocalTime.now(clock).getHour()));
+            return context;
+        });
     }
 
     /**

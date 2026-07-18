@@ -39,6 +39,13 @@ class SubjectRateObserverTest {
     }
 
     @Test
+    void observeSharesTheSameWindowAsRecord() {
+        SubjectRateObserver observer = observer(Duration.ofSeconds(10));
+        assertThat(observer.observe("alice").block()).isEqualTo(1);   // 리액티브 계약도 같은 카운터를 센다
+        assertThat(observer.record("alice")).isEqualTo(2);
+    }
+
+    @Test
     void subjectsAreCountedIndependently() {
         SubjectRateObserver observer = observer(Duration.ofSeconds(10));
         observer.record("alice");
