@@ -8,10 +8,12 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.net.InetSocketAddress;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,7 @@ import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.web.server.ServerWebExchange;
 
 import com.ztg.gateway.config.RateProperties;
+import com.ztg.gateway.config.TrustedProxiesProperties;
 
 import com.ztg.common.model.DecisionRequest;
 import com.ztg.common.model.DecisionResponse;
@@ -48,6 +51,7 @@ import reactor.test.StepVerifier;
  *   <li>토큰 유효 + PDP DENY → 403 + 사유 헤더, 백엔드 미호출.</li>
  *   <li>토큰 유효 + PDP 호출 실패 → 403 (fail-close), 백엔드 미호출.</li>
  *   <li>인가 결정이 ztg.authz.decisions 카운터에 decision/cause 태그로 집계됨(관측).</li>
+ *   <li>XFF 신뢰 경계: 신뢰 발신(loopback)의 XFF만 채택, 비신뢰/미상 발신의 XFF는 무시.</li>
  * </ul>
  */
 class JwtAuthGlobalFilterTest {
@@ -61,8 +65,11 @@ class JwtAuthGlobalFilterTest {
             new SubjectRateObserver(new RateProperties(Duration.ofSeconds(10), 60, 40));
     // 09시(UTC)로 고정 — hour-of-day 신호를 결정적으로 검증한다.
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-01T09:00:00Z"), ZoneId.of("UTC"));
+    // 운영 기본값과 같은 loopback 신뢰 — XFF 채택은 발신 원격주소가 이 목록에 들 때만 일어난다.
+    private final TrustedProxiesProperties trustedProxies =
+            new TrustedProxiesProperties(List.of("127.0.0.0/8", "::1/128"));
     private final JwtAuthGlobalFilter filter =
-            new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, registry, rateObserver, clock);
+            new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, trustedProxies, registry, rateObserver, clock);
 
     @Test
     void missing_token_is_401_and_does_not_forward() {
@@ -274,16 +281,52 @@ class JwtAuthGlobalFilterTest {
                 .thenReturn(Mono.just(DecisionResponse.allow("ok")));
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/hello")
+                        .remoteAddress(new InetSocketAddress("127.0.0.1", 40000))  // 신뢰 발신(loopback)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
                         .header(JwtAuthGlobalFilter.FORWARDED_FOR_HEADER, "203.0.113.7, 10.0.0.1"));
 
         StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
 
-        // 게이트웨이가 관측한 IP(XFF 첫 홉)·레이트·시각이 PDP 질의 context에 RiskSignals 키로 실린다.
+        // 게이트웨이가 관측한 IP(신뢰 발신의 XFF 첫 홉)·레이트·시각이 PDP 질의 context에 RiskSignals 키로 실린다.
         java.util.Map<String, String> ctx = sent.getValue().context();
         assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP)).isEqualTo("203.0.113.7");
         assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_REQUESTS_IN_WINDOW)).isEqualTo("1");
         assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_HOUR_OF_DAY)).isEqualTo("9");
+    }
+
+    @Test
+    void xff_from_untrusted_peer_is_ignored_and_socket_address_is_used() {
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        ArgumentCaptor<DecisionRequest> sent = ArgumentCaptor.forClass(DecisionRequest.class);
+        when(pdpClient.decide(sent.capture(), anyString()))
+                .thenReturn(Mono.just(DecisionResponse.allow("ok")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/hello")
+                        .remoteAddress(new InetSocketAddress("198.51.100.9", 40000))  // 비신뢰 발신(외부 클라이언트)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
+                        .header(JwtAuthGlobalFilter.FORWARDED_FOR_HEADER, "203.0.113.7"));
+
+        StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
+
+        // 클라이언트가 직접 쓴 XFF는 자기 신고라 무시된다 — 위조 XFF로 ip-change 회피 불가.
+        assertThat(sent.getValue().context().get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP))
+                .isEqualTo("198.51.100.9");
+    }
+
+    @Test
+    void xff_without_known_remote_address_is_ignored() {
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        ArgumentCaptor<DecisionRequest> sent = ArgumentCaptor.forClass(DecisionRequest.class);
+        when(pdpClient.decide(sent.capture(), anyString()))
+                .thenReturn(Mono.just(DecisionResponse.allow("ok")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/hello")  // 원격주소 미상 — 발신을 확인 못 하면 비신뢰
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
+                        .header(JwtAuthGlobalFilter.FORWARDED_FOR_HEADER, "203.0.113.7"));
+
+        StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
+
+        assertThat(sent.getValue().context().get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP)).isNull();
     }
 
     @Test

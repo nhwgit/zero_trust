@@ -1,7 +1,9 @@
 package com.ztg.gateway.filter;
 
 import com.ztg.gateway.client.PdpClient;
+import com.ztg.gateway.config.TrustedProxiesProperties;
 import com.ztg.gateway.risk.RateObserver;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Clock;
 import java.time.LocalTime;
@@ -75,6 +77,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     private final ReactiveJwtDecoder jwtDecoder;
     private final PdpClient pdpClient;
     private final String trustSecret;
+    private final TrustedProxies trustedProxies;
     private final MeterRegistry meterRegistry;
     private final RateObserver rateObserver;
     private final Clock clock;
@@ -82,12 +85,14 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     JwtAuthGlobalFilter(ReactiveJwtDecoder jwtDecoder,
                         PdpClient pdpClient,
                         @Value("${ztg.gateway.trust-secret}") String trustSecret,
+                        TrustedProxiesProperties trustedProxiesProperties,
                         MeterRegistry meterRegistry,
                         RateObserver rateObserver,
                         Clock clock) {
         this.jwtDecoder = jwtDecoder;
         this.pdpClient = pdpClient;
         this.trustSecret = trustSecret;
+        this.trustedProxies = TrustedProxies.fromCidrs(trustedProxiesProperties.trustedProxies());
         this.meterRegistry = meterRegistry;
         this.rateObserver = rateObserver;
         this.clock = clock;
@@ -175,7 +180,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
      * 이번 요청의 위험 신호를 관측해 {@link DecisionRequest#context()}에 실을 맵으로 만든다.
      *
      * <ul>
-     *   <li><b>source-ip</b>: 출발지 IP. 프록시가 있으면 {@code X-Forwarded-For} 첫 홉, 없으면 소켓 원격주소.
+     *   <li><b>source-ip</b>: 출발지 IP. 신뢰 프록시가 단 {@code X-Forwarded-For}면 첫 홉, 아니면 소켓 원격주소.
      *       PIP가 직전 관측과 비교해 IP 변화를 가중하고, 캐시 키에도 반영돼 <b>새 IP는 자동 미스</b>가 된다.</li>
      *   <li><b>requests-in-window</b>: 이 주체의 슬라이딩 윈도우 요청 수(레이트 급증 신호). 매 요청 달라지는
      *       휘발성 값이라 캐시 키에선 제외한다({@link com.ztg.gateway.cache.DecisionCache} 키 설계 참조) — 급증은 epoch 능동 무효화로 처리.</li>
@@ -203,20 +208,21 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     }
 
     /**
-     * 출발지 IP를 고른다: {@code X-Forwarded-For}가 있으면 첫(가장 왼쪽) 항목 = 원 클라이언트,
-     * 없으면 TCP 소켓의 원격주소. 둘 다 없으면 {@code null}(신호 부재).
+     * 출발지 IP를 고른다. XFF는 발신자가 임의로 쓸 수 있는 자기 신고 값이라, 소켓 원격주소가
+     * 신뢰 프록시 목록({@code ztg.gateway.trusted-proxies})에 들 때만 첫(가장 왼쪽) 항목을
+     * 원 클라이언트로 인정한다 — 무조건 믿으면 XFF 고정으로 ip-change 신호를 영영 회피하거나
+     * XFF 회전으로 캐시·PIP 상태를 오염시킬 수 있다. 비신뢰 발신(원격주소 미상 포함)은 소켓
+     * 원격주소를 그대로 쓰고, 그마저 없으면 {@code null}(신호 부재).
      */
-    private static String clientIp(ServerHttpRequest request) {
+    private String clientIp(ServerHttpRequest request) {
+        InetSocketAddress remote = request.getRemoteAddress();
+        InetAddress peer = remote != null ? remote.getAddress() : null;
         String forwarded = request.getHeaders().getFirst(FORWARDED_FOR_HEADER);
-        if (forwarded != null && !forwarded.isBlank()) {
+        if (forwarded != null && !forwarded.isBlank() && peer != null && trustedProxies.isTrusted(peer)) {
             // "client, proxy1, proxy2" → 첫 홉만. 프록시가 덧붙이므로 가장 왼쪽이 원 클라이언트다.
             return forwarded.split(",", 2)[0].trim();
         }
-        InetSocketAddress remote = request.getRemoteAddress();
-        if (remote != null && remote.getAddress() != null) {
-            return remote.getAddress().getHostAddress();
-        }
-        return null;
+        return peer != null ? peer.getHostAddress() : null;
     }
 
     /**

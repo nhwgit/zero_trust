@@ -31,6 +31,11 @@ ztg:
     trust-secret: ${GATEWAY_TRUST_SECRET:ztg-gateway-trust-secret}
     # PDP(정책결정) 위치. JWT 검증 통과 후 매 요청마다 여기에 인가를 질의한다.
     pdp-base-uri: ${PDP_BASE_URI:http://localhost:8084}
+    # XFF 신뢰 경계: 소켓 원격주소가 이 목록(IP/CIDR, 쉼표 구분)에 들 때만 X-Forwarded-For를
+    # 출발지 IP로 인정한다. XFF는 자기 신고 값이라 무조건 믿으면 위조로 ip-change 신호 회피가 가능.
+    # 기본은 loopback 신뢰(데모/스모크가 localhost 경유 XFF 주입) — 운영이라면 빈 값에서 시작해
+    # 실제 LB/프록시 대역만 명시한다. 컨테이너 경로는 도커 브리지 대역을 env로 추가.
+    trusted-proxies: ${GATEWAY_TRUSTED_PROXIES:127.0.0.0/8,::1/128}
     # 주체별 요청 레이트 관측(PEP). 슬라이딩 윈도우 길이 + 폭주 판정 임계.
     # 소유권: 단일 GW(기본)는 노드-로컬 인메모리. fanout.enabled=true(다중 GW 모드)면 Redis 공유 집계로
     # 승격된다 — 노드별로 세면 폭주가 1/N로 희석돼 어느 노드도 임계를 못 넘기 때문(임계는 전역 레이트 기준).
