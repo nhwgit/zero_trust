@@ -10,6 +10,7 @@ import com.ztg.pip.store.SubjectRiskState;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Clock;
 import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
@@ -28,9 +29,10 @@ class PipSignalControllerTest {
     private final RiskEngine riskEngine = new RiskEngine(new RiskProperties(40, 30, 40, 40, 15, 60, 40, 9, 18));
     private final SubjectRiskState state = new SubjectRiskState(Duration.ofSeconds(30));
     private final L4RateFlagStore l4Flags = new L4RateFlagStore(Duration.ofSeconds(30));
-    // 공개 생성자(실제 시계) 사용 — 이 테스트는 점수 산수가 아니라 ack 계약(enforcement)만 단언하므로 무해.
+    // 실제 시계 사용 — 이 테스트는 점수 산수가 아니라 ack 계약(enforcement)만 단언하므로 무해.
     private final AssessmentService service =
-            new AssessmentService(new SubjectAttributeStore(), riskEngine, state, silent, l4Flags);
+            new AssessmentService(new SubjectAttributeStore(), riskEngine, state, silent, l4Flags,
+                    Clock.systemDefaultZone());
     private final PipSignalController controller = new PipSignalController(service, l4Flags);
 
     @Test

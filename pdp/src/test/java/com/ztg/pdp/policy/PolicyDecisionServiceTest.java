@@ -7,9 +7,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import java.time.Clock;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
@@ -29,9 +26,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 class PolicyDecisionServiceTest {
 
     private final PipClient pip = mock(PipClient.class);
-    private final PolicyEngine engine = new PolicyEngine(
-            Clock.fixed(LocalDate.of(2026, 5, 31).atTime(12, 0).toInstant(ZoneOffset.UTC), ZoneOffset.UTC),
-            9, 18, 80);
+    private final PolicyEngine engine = new PolicyEngine(9, 18, 80);
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
     private final PolicyDecisionService service = new PolicyDecisionService(pip, engine, registry);
 
@@ -56,11 +51,28 @@ class PolicyDecisionServiceTest {
                         new SubjectAttributes("alice", "finance", true, 10),
                         new RiskAssessment(10, List.of()), 3L));
 
+        // context 없음 → hour는 중립값(정오)으로 폴백 = 업무시간 내.
         DecisionResponse res = service.decide(new DecisionRequest("alice", "GET", "/api/payroll", Map.of()));
 
         assertThat(res.decision()).isEqualTo(Decision.ALLOW);
         assertThat(res.epoch()).isEqualTo(3L);   // PIP epoch가 결정에 실려 게이트웨이로 역전파된다
         assertThat(registry.counter("ztg.pdp.decisions", "decision", "allow", "cause", "none").count())
                 .isEqualTo(1.0);
+    }
+
+    @Test
+    void payroll_hours_judged_by_gateway_observed_hour_not_local_clock() {
+        // 시간 정책의 입력은 게이트웨이가 관측해 실은 hour-of-day다 — PDP 호스트가 어느 TZ든
+        // 같은 관측값이면 같은 결과(시계 3개 → 관측 지점 1개 단일화). 22시 관측이면 payroll은 거부된다.
+        when(pip.assess(eq("alice"), any(RiskSignals.class)))
+                .thenReturn(new PipAssessment(
+                        new SubjectAttributes("alice", "finance", true, 10),
+                        new RiskAssessment(10, List.of()), 3L));
+
+        DecisionResponse res = service.decide(new DecisionRequest("alice", "GET", "/api/payroll",
+                Map.of(RiskSignals.CTX_HOUR_OF_DAY, "22")));
+
+        assertThat(res.decision()).isEqualTo(Decision.DENY);
+        assertThat(res.reason()).contains("business hours").contains("22");
     }
 }

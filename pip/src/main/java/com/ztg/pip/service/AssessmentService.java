@@ -11,7 +11,6 @@ import com.ztg.pip.store.SubjectAttributeStore;
 import com.ztg.pip.store.SubjectRiskState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.ztg.common.model.PipAssessment;
@@ -37,15 +36,9 @@ public class AssessmentService {
     private final L4RateFlagStore l4Flags;
     private final Clock clock;
 
-    @Autowired
+    /** 시계는 존 고정 빈(PipApplication)이 주입된다 — out-of-band 재평가의 hour가 호스트 TZ에 흔들리지 않게. */
     public AssessmentService(SubjectAttributeStore store, RiskEngine riskEngine, SubjectRiskState state,
-                             EpochPublisher epochPublisher, L4RateFlagStore l4Flags) {
-        this(store, riskEngine, state, epochPublisher, l4Flags, Clock.systemDefaultZone());
-    }
-
-    /** 테스트용 — 시계 주입으로 out-of-band 재평가의 시각 신호를 결정적으로 만든다. */
-    AssessmentService(SubjectAttributeStore store, RiskEngine riskEngine, SubjectRiskState state,
-                      EpochPublisher epochPublisher, L4RateFlagStore l4Flags, Clock clock) {
+                             EpochPublisher epochPublisher, L4RateFlagStore l4Flags, Clock clock) {
         this.store = store;
         this.riskEngine = riskEngine;
         this.state = state;

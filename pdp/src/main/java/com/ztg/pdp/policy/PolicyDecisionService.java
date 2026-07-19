@@ -33,9 +33,9 @@ public class PolicyDecisionService {
     }
 
     public DecisionResponse decide(DecisionRequest request) {
+        RiskSignals signals = RiskSignals.fromContext(request.context());
         PipAssessment assessment;
         try {
-            RiskSignals signals = RiskSignals.fromContext(request.context());
             assessment = pipClient.assess(request.subject(), signals);
         } catch (RuntimeException e) {
             log.warn("PIP lookup failed for subject={}, failing closed: {}", request.subject(), e.toString());
@@ -43,8 +43,9 @@ public class PolicyDecisionService {
             return DecisionResponse.deny("context unavailable (PIP error): " + e.getMessage());
         }
 
+        // 시간 정책 입력도 게이트웨이 관측값 — PDP 자체 시계로 판정하면 노드 TZ에 따라 결과가 갈린다.
         DecisionResponse response = policyEngine.evaluate(
-                request, assessment.attributes(), assessment.risk(), assessment.epoch());
+                request, assessment.attributes(), assessment.risk(), assessment.epoch(), signals.hourOfDay());
         boolean allowed = response.decision() == Decision.ALLOW;
         recordDecision(allowed ? "allow" : "deny", allowed ? "none" : "policy");
         log.info("decision subject={} action={} resource={} -> {} ({})",

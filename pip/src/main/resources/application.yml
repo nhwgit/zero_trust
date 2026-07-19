@@ -16,6 +16,10 @@ spring:
       connect-timeout: ${REDIS_CONNECT_TIMEOUT:200ms}
 
 ztg:
+  pip:
+    # out-of-band(L4 재평가) 시계의 존. 게이트웨이 zone과 같은 값이어야 시각 판정 좌표가 일치한다
+    # (임계 정합과 같은 배포 설정 결합).
+    zone: ${PIP_ZONE:Asia/Seoul}
   # 다중 GW 능동 무효화 fan-out(Redis pub/sub) 발신. 기본 off — 켜면 epoch 상승을 모든 GW에 즉시 전파한다.
   # off면 Redis에 연결하지 않는다(단일 PIP/테스트 무영향).
   fanout:

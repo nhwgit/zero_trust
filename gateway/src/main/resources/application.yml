@@ -36,6 +36,9 @@ ztg:
     # 기본은 loopback 신뢰(데모/스모크가 localhost 경유 XFF 주입) — 운영이라면 빈 값에서 시작해
     # 실제 LB/프록시 대역만 명시한다. 컨테이너 경로는 도커 브리지 대역을 env로 추가.
     trusted-proxies: ${GATEWAY_TRUSTED_PROXIES:127.0.0.0/8,::1/128}
+    # hour-of-day 관측 시계의 존. 호스트 TZ 대신 설정으로 고정 — 전 서비스(PIP zone 포함)와 같은 값이어야
+    # off-hours 판정·캐시 키가 노드 간 일치한다(임계 정합과 같은 배포 설정 결합).
+    zone: ${GATEWAY_ZONE:Asia/Seoul}
     # 주체별 요청 레이트 관측(PEP). 슬라이딩 윈도우 길이 + 폭주 판정 임계.
     # 소유권: 단일 GW(기본)는 노드-로컬 인메모리. fanout.enabled=true(다중 GW 모드)면 Redis 공유 집계로
     # 승격된다 — 노드별로 세면 폭주가 1/N로 희석돼 어느 노드도 임계를 못 넘기 때문(임계는 전역 레이트 기준).

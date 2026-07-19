@@ -1,7 +1,9 @@
 package com.ztg.gateway;
 
 import java.time.Clock;
+import java.time.ZoneId;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
@@ -19,9 +21,13 @@ public class GatewayApplication {
         SpringApplication.run(GatewayApplication.class, args);
     }
 
-    /** 시각 기반 위험 신호용 시계 — 테스트에서 고정 시계로 대체할 수 있게 빈으로 분리. */
+    /**
+     * 시각 기반 위험 신호용 시계. 존은 호스트 TZ가 아니라 설정으로 고정한다 — hour-of-day가 캐시 키와
+     * off-hours 판정에 들어가므로, 다중 GW의 존이 갈리면 같은 순간의 판정·키가 노드마다 갈린다.
+     * 잘못된 존 이름은 기동 실패(fail-fast).
+     */
     @Bean
-    Clock clock() {
-        return Clock.systemDefaultZone();
+    Clock clock(@Value("${ztg.gateway.zone:Asia/Seoul}") String zone) {
+        return Clock.system(ZoneId.of(zone));
     }
 }

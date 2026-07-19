@@ -194,6 +194,32 @@ class AssessmentServiceTest {
     }
 
     @Test
+    void l4_reassessment_hour_follows_clock_zone_so_zones_must_be_unified() {
+        // 요청 경로의 hour는 게이트웨이 관측값 하나지만, out-of-band(L4 재평가)는 요청이 없어
+        // 자체 시계로 산출한다 — 같은 순간이라도 시계의 존이 다르면 off-hours 판정이 갈려
+        // epoch bump(무효화) 여부까지 달라진다. 03:00Z = 서울 12시(업무시간)·UTC 03시(업무외).
+        // 그래서 이 시계의 존은 설정(ztg.pip.zone)으로 게이트웨이와 통일한다.
+        Instant sameMoment = Instant.parse("2026-07-11T03:00:00Z");
+
+        assertThat(epochAfterL4Reassessment(Clock.fixed(sameMoment, ZoneOffset.ofHours(9))))
+                .isZero();          // 서울 12시: 팩터 구성 불변(baseline+rate-l4) → 무효화 없음
+        assertThat(epochAfterL4Reassessment(Clock.fixed(sameMoment, ZoneOffset.UTC)))
+                .isEqualTo(1L);     // UTC 03시: off-hours 추가 → 팩터 변화 → 무효화 발생
+    }
+
+    /** 같은 시나리오(플래그 선착→첫 관측→L4 재평가)를 주어진 시계로 돌려 재평가 후 epoch를 돌려준다. */
+    private long epochAfterL4Reassessment(Clock clock) {
+        SubjectRiskState freshState = new SubjectRiskState(Duration.ofSeconds(30), () -> 0L);
+        L4RateFlagStore freshFlags = new L4RateFlagStore(Duration.ofSeconds(30));
+        AssessmentService svc = new AssessmentService(
+                new SubjectAttributeStore(), riskEngine, freshState, (s, e) -> {}, freshFlags, clock);
+        svc.applyL4RateSignal("1.1.1.1", 87, 5);                      // 주체 없음: 플래그만 적재
+        svc.assess("alice", RiskSignals.direct("1.1.1.1", 0, 12));    // 첫 관측: baseline+rate-l4, epoch 0
+        svc.applyL4RateSignal("1.1.1.1", 87, 5);                      // 재평가: hour는 시계에서 산출
+        return freshState.currentEpoch("alice");
+    }
+
+    @Test
     void unknown_subject_is_max_risk() {
         // 미등록 주체는 보수적 기본 프로필(baseline 100, 미신뢰) → 점수 100으로 clamp.
         PipAssessment res = service.assess("mallory", RiskSignals.none());
