@@ -1,13 +1,17 @@
 // common — 모듈 간 공유 라이브러리: 통신 DTO + 서비스 공통 웹 관심사(요청추적 필터).
 // Spring Boot 앱이 아니므로 boot 플러그인을 적용하지 않는다(실행 불가, 의존성 최소화).
-// 직렬화는 이 DTO를 사용하는 각 웹 앱(pdp/pip/gateway)의 Jackson이 담당한다.
 plugins {
     id 'java-library'
 }
 
 dependencies {
-    // RequestIdFilter(서블릿 필터) 컴파일용 — servlet/slf4j는 이 필터를 쓰는 서블릿 서비스가
-    // 런타임에 이미 제공한다. compileOnly라 리액티브 게이트웨이(서블릿 없음)로는 새지 않는다.
+    // servlet/slf4j는 이 필터를 쓰는 서블릿 서비스가 런타임에 제공한다.
+    // compileOnly라 리액티브 게이트웨이(서블릿 없음)로는 새지 않는다.
     compileOnly 'jakarta.servlet:jakarta.servlet-api'
     compileOnly 'org.slf4j:slf4j-api'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'jakarta.servlet:jakarta.servlet-api'
+    // MDC 검증에 실제 slf4j 바인딩이 필요(NOP 바인딩은 MDC.get이 항상 null).
+    testRuntimeOnly 'ch.qos.logback:logback-classic'
 }

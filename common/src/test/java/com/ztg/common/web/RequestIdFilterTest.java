@@ -16,7 +16,6 @@ import jakarta.servlet.ServletException;
 
 /**
  * RequestIdFilter 단위 검증 — 분산 추적의 핵심 규약(생성/전파/응답에코/MDC 정리)을 못박는다.
- * (서블릿 mock을 쓰는 spring-test가 있는 pip 모듈에 둔다; common은 테스트 의존성을 두지 않는다.)
  */
 class RequestIdFilterTest {
 
