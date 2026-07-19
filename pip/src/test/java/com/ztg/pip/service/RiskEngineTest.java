@@ -43,7 +43,7 @@ class RiskEngineTest {
         // 정상: trusted, 같은 IP, 레이트 낮음, 업무시간 → baseline 10만.
         RiskAssessment a = assess(
                 alice(10),
-                new RiskSignals("1.2.3.4", 5, 12),
+                RiskSignals.direct("1.2.3.4", 5, 12),
                 "1.2.3.4");
 
         assertThat(a.score()).isEqualTo(10);
@@ -56,7 +56,7 @@ class RiskEngineTest {
         // 데모 핵심: 새 IP(+30) + 폭주(+40) + baseline 10 = 80 → DENY(재로그인 없이 위험 상승).
         RiskAssessment a = assess(
                 alice(10),
-                new RiskSignals("9.9.9.9", 100, 12),   // 직전 1.2.3.4와 다름, 윈도우 100 > 60
+                RiskSignals.direct("9.9.9.9", 100, 12),   // 직전 1.2.3.4와 다름, 윈도우 100 > 60
                 "1.2.3.4");
 
         assertThat(a.score()).isEqualTo(80);
@@ -71,7 +71,7 @@ class RiskEngineTest {
         // lastSeenIp=null(첫 관측)이면 IP 변화로 치지 않는다 → baseline만.
         RiskAssessment a = assess(
                 alice(10),
-                new RiskSignals("9.9.9.9", 5, 12),
+                RiskSignals.direct("9.9.9.9", 5, 12),
                 null);
 
         assertThat(a.factors()).extracting(RiskFactor::signal).containsExactly("baseline");
@@ -82,7 +82,7 @@ class RiskEngineTest {
     void same_ip_is_not_a_change() {
         RiskAssessment a = assess(
                 alice(10),
-                new RiskSignals("1.2.3.4", 5, 12),
+                RiskSignals.direct("1.2.3.4", 5, 12),
                 "1.2.3.4");
 
         assertThat(a.factors()).extracting(RiskFactor::signal).doesNotContain("ip-change");
@@ -93,7 +93,7 @@ class RiskEngineTest {
         // 미신뢰 디바이스(+40) + 업무시간 외(+15) + baseline 20 = 75 → 임계 미만이지만 누적 확인.
         RiskAssessment a = assess(
                 new SubjectAttributes("bob", "engineering", false, 20),
-                new RiskSignals("1.1.1.1", 5, 3),   // 03시 = 업무시간 밖
+                RiskSignals.direct("1.1.1.1", 5, 3),   // 03시 = 업무시간 밖
                 "1.1.1.1");
 
         assertThat(a.score()).isEqualTo(75);
@@ -107,7 +107,7 @@ class RiskEngineTest {
         // 미등록 주체(baseline 100) + 다른 신호들이 더해져도 100을 넘지 않는다.
         RiskAssessment a = assess(
                 new SubjectAttributes("mallory", "unknown", false, 100),
-                new RiskSignals("9.9.9.9", 100, 3),
+                RiskSignals.direct("9.9.9.9", 100, 3),
                 "1.1.1.1");
 
         assertThat(a.score()).isEqualTo(100);
@@ -117,9 +117,9 @@ class RiskEngineTest {
     @Test
     void burst_threshold_is_exclusive_boundary() {
         // 경계: 직전 밴드 없음(첫 관측) 기준 — 정확히 진입 임계(60)는 급증 아님, 61부터 급증.
-        assertThat(assess(alice(0), new RiskSignals("1.1.1.1", 60, 12), "1.1.1.1").factors())
+        assertThat(assess(alice(0), RiskSignals.direct("1.1.1.1", 60, 12), "1.1.1.1").factors())
                 .extracting(RiskFactor::signal).doesNotContain("rate-burst");
-        assertThat(assess(alice(0), new RiskSignals("1.1.1.1", 61, 12), "1.1.1.1").factors())
+        assertThat(assess(alice(0), RiskSignals.direct("1.1.1.1", 61, 12), "1.1.1.1").factors())
                 .extracting(RiskFactor::signal).contains("rate-burst");
     }
 
@@ -137,14 +137,14 @@ class RiskEngineTest {
     @Test
     void held_burst_band_keeps_rate_burst_weight_and_explains_hysteresis() {
         // 폭주 중 레이트가 사이 구간(50)으로 내려와도 직전 밴드=폭주면 rate-burst 가중이 유지된다(같은 신호명·가중치).
-        RiskAssessment held = engine().assess(alice(10), new RiskSignals("1.1.1.1", 50, 12), "1.1.1.1",
+        RiskAssessment held = engine().assess(alice(10), RiskSignals.direct("1.1.1.1", 50, 12), "1.1.1.1",
                 false, Boolean.TRUE, null);
         assertThat(held.score()).isEqualTo(50);   // baseline 10 + rate-burst 40
         assertThat(held.factors()).extracting(RiskFactor::signal).contains("rate-burst");
         assertThat(held.explain()).contains("hold burst band");
 
         // 해제 임계 이하(30)로 내려오면 그때 가중이 빠진다 — 한 번의 점수 변화로 수렴.
-        RiskAssessment exited = engine().assess(alice(10), new RiskSignals("1.1.1.1", 30, 12), "1.1.1.1",
+        RiskAssessment exited = engine().assess(alice(10), RiskSignals.direct("1.1.1.1", 30, 12), "1.1.1.1",
                 false, Boolean.TRUE, null);
         assertThat(exited.score()).isEqualTo(10);
         assertThat(exited.factors()).extracting(RiskFactor::signal).doesNotContain("rate-burst");
@@ -155,7 +155,7 @@ class RiskEngineTest {
         // hold 창 안: 비교 기준(lastSeenIp)이 이미 새 IP로 덮여 "지금은 변화 아님"이어도 ip-change 가중이 유지된다.
         // 순간 신호였다면 바뀐 직후 재평가에서 바로 빠져 DENY가 1~수초 스파이크로 끝난다(재시도 우회).
         RiskAssessment held = engine().assess(
-                alice(10), new RiskSignals("9.9.9.9", 5, 12), "9.9.9.9", true, null, null);
+                alice(10), RiskSignals.direct("9.9.9.9", 5, 12), "9.9.9.9", true, null, null);
 
         assertThat(held.score()).isEqualTo(40);   // baseline 10 + ip-change 30
         assertThat(held.factors()).extracting(RiskFactor::signal).contains("ip-change");
@@ -166,7 +166,7 @@ class RiskEngineTest {
     void fresh_change_with_active_hold_counts_once() {
         // hold 창 안에서 또 변화(회전)해도 같은 신호가 이중 가산되지 않는다 — 설명은 구체적인 쪽(변화 순간)을 쓴다.
         RiskAssessment a = engine().assess(
-                alice(10), new RiskSignals("8.8.8.8", 5, 12), "9.9.9.9", true, null, null);
+                alice(10), RiskSignals.direct("8.8.8.8", 5, 12), "9.9.9.9", true, null, null);
 
         assertThat(a.score()).isEqualTo(40);      // +30 한 번만
         assertThat(a.explain()).contains("9.9.9.9 -> 8.8.8.8");
@@ -176,7 +176,7 @@ class RiskEngineTest {
     void hold_expired_and_same_ip_drops_ip_change() {
         // 창 경과 후(held=false) 같은 IP면 가중이 빠진다 — 한 번의 점수 하강으로 수렴(가역성).
         RiskAssessment a = engine().assess(
-                alice(10), new RiskSignals("9.9.9.9", 5, 12), "9.9.9.9", false, null, null);
+                alice(10), RiskSignals.direct("9.9.9.9", 5, 12), "9.9.9.9", false, null, null);
 
         assertThat(a.score()).isEqualTo(10);
         assertThat(a.factors()).extracting(RiskFactor::signal).doesNotContain("ip-change");
@@ -197,7 +197,7 @@ class RiskEngineTest {
         // 토큰 없는 SYN 플러드는 L7 레이트(requestsInWindow)에 안 잡혀도 L4 축이 위험을 올린다.
         RiskAssessment a = engine().assess(
                 new SubjectAttributes("alice", "finance", false, 10),
-                new RiskSignals("1.2.3.4", 5, 12),
+                RiskSignals.direct("1.2.3.4", 5, 12),
                 "1.2.3.4",
                 false,
                 null,

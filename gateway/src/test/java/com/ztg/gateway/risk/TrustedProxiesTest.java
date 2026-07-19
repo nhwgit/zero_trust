@@ -1,4 +1,4 @@
-package com.ztg.gateway.filter;
+package com.ztg.gateway.risk;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

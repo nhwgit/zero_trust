@@ -1,6 +1,7 @@
 package com.ztg.gateway.filter;
 
 import com.ztg.gateway.client.PdpClient;
+import com.ztg.gateway.risk.RiskContextObserver;
 import com.ztg.gateway.risk.SubjectRateObserver;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -70,8 +71,8 @@ class JwtAuthGlobalFilterTest {
     // 운영 기본값과 같은 loopback 신뢰 — XFF 채택은 발신 원격주소가 이 목록에 들 때만 일어난다.
     private final TrustedProxiesProperties trustedProxies =
             new TrustedProxiesProperties(List.of("127.0.0.0/8", "::1/128"));
-    private final JwtAuthGlobalFilter filter =
-            new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, trustedProxies, registry, rateObserver, clock);
+    private final JwtAuthGlobalFilter filter = new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, registry,
+            new RiskContextObserver(rateObserver, trustedProxies, clock));
 
     @Test
     void missing_token_is_401_and_does_not_forward() {
@@ -285,7 +286,7 @@ class JwtAuthGlobalFilterTest {
                 MockServerHttpRequest.get("/api/hello")
                         .remoteAddress(new InetSocketAddress("127.0.0.1", 40000))  // 신뢰 발신(loopback)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
-                        .header(JwtAuthGlobalFilter.FORWARDED_FOR_HEADER, "203.0.113.7, 10.0.0.1"));
+                        .header(RiskContextObserver.FORWARDED_FOR_HEADER, "203.0.113.7, 10.0.0.1"));
 
         StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
 
@@ -308,7 +309,7 @@ class JwtAuthGlobalFilterTest {
                 MockServerHttpRequest.get("/api/hello")
                         .remoteAddress(new InetSocketAddress("198.51.100.9", 40000))  // 비신뢰 발신(외부 클라이언트)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
-                        .header(JwtAuthGlobalFilter.FORWARDED_FOR_HEADER, "203.0.113.7"));
+                        .header(RiskContextObserver.FORWARDED_FOR_HEADER, "203.0.113.7"));
 
         StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
 
@@ -329,7 +330,7 @@ class JwtAuthGlobalFilterTest {
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/hello")  // 원격주소 미상 — 발신을 확인 못 하면 비신뢰
                         .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
-                        .header(JwtAuthGlobalFilter.FORWARDED_FOR_HEADER, "203.0.113.7"));
+                        .header(RiskContextObserver.FORWARDED_FOR_HEADER, "203.0.113.7"));
 
         StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
 

@@ -23,6 +23,16 @@ class SubjectRiskStateTest {
         nowNanos += d.toNanos();
     }
 
+    /** 논리 축만 관심 있는 케이스용. */
+    private void recordIp(String subject, String sourceIp) {
+        state.recordIps(subject, sourceIp, null);
+    }
+
+    /** 네트워크 축만 관심 있는 케이스용. */
+    private void recordNetworkIp(String subject, String networkIp) {
+        state.recordIps(subject, null, networkIp);
+    }
+
     /** 점수만 관심 있는 케이스용 — 팩터 구성은 고정해 bump 판정이 점수 축으로만 결정되게 한다. */
     private long recordScore(String subject, int score) {
         return state.recordScore(subject, score, Set.of("baseline"));
@@ -31,8 +41,15 @@ class SubjectRiskStateTest {
     @Test
     void records_and_reads_last_seen_ip() {
         assertThat(state.lastSeenIp("alice")).isNull();   // 첫 관측 전
-        state.recordIp("alice", "1.2.3.4");
+        recordIp("alice", "1.2.3.4");
         assertThat(state.lastSeenIp("alice")).isEqualTo("1.2.3.4");
+    }
+
+    @Test
+    void records_both_axes_in_one_call() {
+        state.recordIps("alice", "203.0.113.7", "10.0.0.9");
+        assertThat(state.lastSeenIp("alice")).isEqualTo("203.0.113.7");
+        assertThat(state.subjectsByNetworkIp("10.0.0.9")).containsExactly("alice");
     }
 
     @Test
@@ -53,18 +70,16 @@ class SubjectRiskStateTest {
 
     @Test
     void same_score_with_different_factor_set_bumps_epoch() {
-        // 등점 팩터 교체(rate-burst 40 ↔ rate-l4 40, L4 재평가 경로)는 점수 비교만으론 보이지 않는
-        // "위험 성격" 변화다 — 증거가 바뀌었으면 캐시된 결정도 다시 물어야 하므로 bump 대상.
+        // 등점 팩터 교체(rate-burst 40 ↔ rate-l4 40)는 점수 비교만으론 보이지 않는 "위험 성격" 변화 → bump 대상.
         state.recordScore("alice", 50, Set.of("baseline", "rate-burst"));
         assertThat(state.recordScore("alice", 50, Set.of("baseline", "rate-l4"))).isEqualTo(1L);
-        // 같은 점수 + 같은 구성 반복은 종전대로 안정(불필요한 무효화 없음).
-        assertThat(state.recordScore("alice", 50, Set.of("rate-l4", "baseline"))).isEqualTo(1L);
+        assertThat(state.recordScore("alice", 50, Set.of("rate-l4", "baseline"))).isEqualTo(1L);   // 동일 구성 반복은 안정
     }
 
     @Test
     void epoch_bump_preserves_last_seen_ip() {
         recordScore("alice", 10);
-        state.recordIp("alice", "1.2.3.4");
+        recordIp("alice", "1.2.3.4");
         recordScore("alice", 80);                              // bump
         assertThat(state.lastSeenIp("alice")).isEqualTo("1.2.3.4");  // IP 기준은 유지된다
         assertThat(state.currentEpoch("alice")).isEqualTo(1L);
@@ -72,21 +87,21 @@ class SubjectRiskStateTest {
 
     @Test
     void first_ip_observation_does_not_start_hold() {
-        state.recordIp("alice", "1.2.3.4");                          // 첫 관측 = 변화 아님
+        recordIp("alice", "1.2.3.4");                                // 첫 관측 = 변화 아님
         assertThat(state.ipChangeHeld("alice")).isFalse();
     }
 
     @Test
     void same_ip_does_not_start_hold() {
-        state.recordIp("alice", "1.2.3.4");
-        state.recordIp("alice", "1.2.3.4");
+        recordIp("alice", "1.2.3.4");
+        recordIp("alice", "1.2.3.4");
         assertThat(state.ipChangeHeld("alice")).isFalse();
     }
 
     @Test
     void ip_change_holds_until_window_elapses() {
-        state.recordIp("alice", "1.2.3.4");
-        state.recordIp("alice", "9.9.9.9");                          // 변화 → hold 시작
+        recordIp("alice", "1.2.3.4");
+        recordIp("alice", "9.9.9.9");                                // 변화 → hold 시작
         assertThat(state.ipChangeHeld("alice")).isTrue();
 
         advance(HOLD.minusSeconds(1));
@@ -98,10 +113,10 @@ class SubjectRiskStateTest {
 
     @Test
     void repeated_change_extends_hold() {
-        state.recordIp("alice", "1.2.3.4");
-        state.recordIp("alice", "9.9.9.9");                          // t=0 변화
+        recordIp("alice", "1.2.3.4");
+        recordIp("alice", "9.9.9.9");                                // t=0 변화
         advance(Duration.ofSeconds(20));
-        state.recordIp("alice", "8.8.8.8");                          // t=20s 재변화 → 만료 연장(회전 = 지속 신호)
+        recordIp("alice", "8.8.8.8");                                // t=20s 재변화 → 만료 연장(회전 = 지속 신호)
         advance(Duration.ofSeconds(20));
         assertThat(state.ipChangeHeld("alice")).isTrue();            // t=40s: 첫 hold(≤30s)는 지났지만 연장으로 유지
 
@@ -111,10 +126,10 @@ class SubjectRiskStateTest {
 
     @Test
     void same_ip_after_change_keeps_hold_running() {
-        state.recordIp("alice", "1.2.3.4");
-        state.recordIp("alice", "9.9.9.9");                          // 변화 → hold 시작
+        recordIp("alice", "1.2.3.4");
+        recordIp("alice", "9.9.9.9");                                // 변화 → hold 시작
         advance(Duration.ofSeconds(10));
-        state.recordIp("alice", "9.9.9.9");                          // 동일 IP 관측은 hold를 끊지도 늘리지도 않음
+        recordIp("alice", "9.9.9.9");                                // 동일 IP 관측은 hold를 끊지도 늘리지도 않음
         advance(HOLD.minusSeconds(10));
         assertThat(state.ipChangeHeld("alice")).isFalse();           // 최초 변화 기준 30s에 만료
     }
@@ -123,8 +138,7 @@ class SubjectRiskStateTest {
     void translates_subjects_by_network_axis_not_logical_axis() {
         // LB/프록시 뒤 시나리오: 논리 축(XFF)과 네트워크 축(소켓 피어)이 다르다. 커널 L4 신호는
         // 패킷 소스(네트워크 축)로 도착하므로 번역은 네트워크 축으로만 맞아야 한다(H3).
-        state.recordIp("alice", "203.0.113.7");                       // 논리 축
-        state.recordNetworkIp("alice", "10.0.0.9");                   // 네트워크 축(=LB IP)
+        state.recordIps("alice", "203.0.113.7", "10.0.0.9");
         assertThat(state.subjectsByNetworkIp("10.0.0.9")).containsExactly("alice");
         assertThat(state.subjectsByNetworkIp("203.0.113.7")).isEmpty();   // 논리 IP로는 못 찾는 게 맞다
         assertThat(state.subjectsByNetworkIp(null)).isEmpty();
@@ -132,9 +146,9 @@ class SubjectRiskStateTest {
 
     @Test
     void network_ip_record_does_not_touch_logical_axis_or_hold() {
-        state.recordIp("alice", "1.2.3.4");
-        state.recordNetworkIp("alice", "10.0.0.9");
-        state.recordNetworkIp("alice", "10.0.0.10");                  // 네트워크 경로 변경은 위험 신호가 아니다
+        recordIp("alice", "1.2.3.4");
+        recordNetworkIp("alice", "10.0.0.9");
+        recordNetworkIp("alice", "10.0.0.10");                        // 네트워크 경로 변경은 위험 신호가 아니다
         assertThat(state.lastSeenIp("alice")).isEqualTo("1.2.3.4");   // 논리 기준 무오염
         assertThat(state.ipChangeHeld("alice")).isFalse();            // hold도 시작되지 않음
         assertThat(state.subjectsByNetworkIp("10.0.0.10")).containsExactly("alice");
@@ -142,9 +156,9 @@ class SubjectRiskStateTest {
 
     @Test
     void blank_or_null_network_ip_does_not_overwrite_baseline() {
-        state.recordNetworkIp("alice", "10.0.0.9");
-        state.recordNetworkIp("alice", null);
-        state.recordNetworkIp("alice", "  ");
+        recordNetworkIp("alice", "10.0.0.9");
+        recordNetworkIp("alice", null);
+        recordNetworkIp("alice", "  ");
         assertThat(state.subjectsByNetworkIp("10.0.0.9")).containsExactly("alice");   // 미상은 기준을 덮지 않음
     }
 
@@ -159,8 +173,8 @@ class SubjectRiskStateTest {
 
     @Test
     void burst_band_record_preserves_ip_epoch_score_and_hold() {
-        state.recordIp("alice", "1.2.3.4");
-        state.recordIp("alice", "9.9.9.9");                          // hold 시작
+        recordIp("alice", "1.2.3.4");
+        recordIp("alice", "9.9.9.9");                                // hold 시작
         recordScore("alice", 10);
         recordScore("alice", 80);                              // bump → epoch 1
         state.recordBurstBand("alice", true);
@@ -172,8 +186,8 @@ class SubjectRiskStateTest {
 
     @Test
     void score_record_preserves_hold() {
-        state.recordIp("alice", "1.2.3.4");
-        state.recordIp("alice", "9.9.9.9");                          // hold 시작
+        recordIp("alice", "1.2.3.4");
+        recordIp("alice", "9.9.9.9");                                // hold 시작
         recordScore("alice", 40);
         assertThat(state.ipChangeHeld("alice")).isTrue();
     }
@@ -182,26 +196,25 @@ class SubjectRiskStateTest {
     void evict_resets_risk_context_but_preserves_epoch() {
         recordScore("alice", 10);
         recordScore("alice", 80);                              // bump → epoch 1
-        state.recordIp("alice", "1.2.3.4");
-        state.recordIp("alice", "9.9.9.9");                          // hold 시작
-        state.recordNetworkIp("alice", "10.0.0.9");
+        recordIp("alice", "1.2.3.4");
+        recordIp("alice", "9.9.9.9");                                // hold 시작
+        recordNetworkIp("alice", "10.0.0.9");
         state.recordBurstBand("alice", true);
         state.evict("alice");
         assertThat(state.lastSeenIp("alice")).isNull();              // 다음 관측은 첫 관측(변화 아님)
         assertThat(state.subjectsByNetworkIp("10.0.0.9")).isEmpty(); // 네트워크 축도 리셋
         assertThat(state.ipChangeHeld("alice")).isFalse();           // hold도 리셋
         assertThat(state.lastBurstBand("alice")).isNull();           // 밴드 기준도 리셋
-        // epoch는 보존 — GW가 단조(max)로 학습하므로 되돌리면 조회(옛 큰 epoch)/적재(새 작은 epoch)가
-        // 영구히 갈려 그 주체가 캐시 불능이 된다. 세대 토큰은 뒤로 가지 않는다.
+        // epoch는 보존 — GW 학습이 단조(max)라 되돌리면 그 주체가 영구 캐시 미스가 된다.
         assertThat(state.currentEpoch("alice")).isEqualTo(1L);
         assertThat(recordScore("alice", 50)).isEqualTo(1L);    // 리셋 후 첫 점수 = 기준 설정(bump 없음)
     }
 
     @Test
     void blank_or_null_ip_does_not_overwrite_baseline_or_start_hold() {
-        state.recordIp("alice", "1.2.3.4");
-        state.recordIp("alice", null);
-        state.recordIp("alice", "  ");
+        recordIp("alice", "1.2.3.4");
+        recordIp("alice", null);
+        recordIp("alice", "  ");
         assertThat(state.lastSeenIp("alice")).isEqualTo("1.2.3.4");   // 미상 IP는 기준을 덮지 않음
         assertThat(state.ipChangeHeld("alice")).isFalse();            // 변화로도 치지 않음
     }

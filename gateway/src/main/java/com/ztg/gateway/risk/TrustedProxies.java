@@ -1,4 +1,4 @@
-package com.ztg.gateway.filter;
+package com.ztg.gateway.risk;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -6,12 +6,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 신뢰 프록시 판정 — IP/CIDR 목록을 파싱해 "이 소켓 원격주소의 XFF를 믿어도 되는가"에 답한다.
- *
- * <p>게이트웨이는 최외곽 진입점이라 {@code X-Forwarded-For}는 발신자가 임의로 쓸 수 있는
- * 자기 신고 값이다. 소켓 원격주소가 이 목록에 드는 발신(우리가 세운 프록시/LB)일 때만
- * XFF를 인정해야 위조 XFF로 ip-change 신호를 회피하거나 캐시·PIP 상태를 오염시키는 경로가
- * 막힌다. 빈 목록이면 아무도 신뢰하지 않는다(fail-safe: XFF 전면 무시).
+ * 신뢰 프록시 판정 — 소켓 원격주소가 IP/CIDR 목록에 들 때만 XFF를 믿는다(위조 XFF 차단).
+ * 빈 목록이면 아무도 신뢰하지 않는다(fail-safe: XFF 전면 무시).
  */
 final class TrustedProxies {
 
@@ -44,9 +40,8 @@ final class TrustedProxies {
     }
 
     /**
-     * 설정 문자열 목록에서 판정기를 만든다. 항목은 IP 리터럴("127.0.0.1", "::1") 또는
-     * CIDR("172.18.0.0/16")만 허용 — 잘못된 항목은 기동 시점에 예외로 실패시킨다(fail-fast,
-     * 오타가 조용히 "아무도 신뢰 안 함"이 되어 스모크가 원인 불명으로 깨지는 것보다 낫다).
+     * IP 리터럴 또는 CIDR 목록에서 판정기를 만든다. 잘못된 항목은 기동 시점에 예외로 실패시킨다
+     * (fail-fast: 오타가 조용히 "아무도 신뢰 안 함"이 되는 것 방지).
      */
     static TrustedProxies fromCidrs(List<String> entries) {
         List<Cidr> ranges = new ArrayList<>();
@@ -82,7 +77,6 @@ final class TrustedProxies {
         return new TrustedProxies(List.copyOf(ranges));
     }
 
-    /** 이 원격주소가 신뢰 프록시인가 — 목록의 어느 한 프리픽스에라도 들면 참. */
     boolean isTrusted(InetAddress address) {
         for (Cidr range : ranges) {
             if (range.contains(address)) {

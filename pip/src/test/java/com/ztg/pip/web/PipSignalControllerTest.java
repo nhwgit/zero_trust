@@ -36,7 +36,7 @@ class PipSignalControllerTest {
     @Test
     void ack_carries_deny_enforcement_with_ttl_synced_to_hold() {
         // alice가 IP A에서 관측된 상태 → 신호가 주체 번역까지 되는 정상 경로.
-        service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
+        service.assess("alice", RiskSignals.direct("1.1.1.1", 0, 12));
 
         var ack = controller.rateL4(new PipSignalController.RateL4Signal("1.1.1.1", 87, 430, 5));
 

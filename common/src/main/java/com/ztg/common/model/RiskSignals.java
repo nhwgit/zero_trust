@@ -3,51 +3,43 @@ package com.ztg.common.model;
 import java.util.Map;
 
 /**
- * 게이트웨이(PEP)가 관측해 전달하는 <b>휘발성</b> 위험 신호. 요청마다 달라진다.
+ * 게이트웨이(PEP)가 관측해 요청마다 전달하는 휘발성 위험 신호.
  *
- * <p>저장 속성({@link SubjectAttributes}: 부서/디바이스/baseline)과 달리, 이 값들은 "지금 이 요청"의
- * 맥락이다. 게이트웨이는 모든 요청(캐시 히트 포함)을 보므로 레이트/IP의 권위 있는 관측자다.
+ * <p>IP는 두 좌표계로 나뉜다: {@code sourceIp}(논리 축, 신뢰 프록시 XFF 반영 — ip-change 판정·캐시 키)와
+ * {@code networkIp}(네트워크 축, 소켓 피어 = 커널(XDP)이 패킷에서 보는 좌표 — L4 신호↔주체 번역).
+ * LB/프록시 뒤에선 두 축이 다르다. 폴백 규칙은 {@link #effectiveNetworkIp()} 한 곳에 둔다.
  *
- * <p><b>IP는 두 좌표계(축)로 나뉜다:</b> {@code sourceIp}(논리 축)는 신뢰 프록시의 XFF를 반영한
- * "원 클라이언트" IP로 ip-change 판정·캐시 키에 쓰이고, {@code networkIp}(네트워크 축)는 게이트웨이
- * 소켓의 피어 IP — 커널(XDP)이 패킷에서 보는 것과 같은 좌표다. LB/프록시 뒤에선 두 축이 다르므로
- * (논리=클라이언트, 네트워크=LB), L4 신호↔주체 번역은 네트워크 축으로만 맞는다.
- *
- * <p>전송 경로: 게이트웨이가 {@link DecisionRequest#context()}에 {@code CTX_*} 키로 실으면,
- * PDP가 {@link #fromContext(Map)}로 복원해 PIP에 전달한다. 키 상수를 한 곳에 둬 PEP/PDP가 같은
- * 어휘를 쓰게 한다(신호가 없으면 context는 비고, 수신 쪽은 {@link #none()} 중립값으로 폴백한다).
- *
- * @param sourceIp         이번 요청의 출발지 IP — 논리 축(직전 관측과 비교해 IP 변화 신호 산출)
- * @param networkIp        게이트웨이가 본 소켓 피어 IP — 네트워크 축(커널 L4 신호와 같은 좌표계).
- *                         {@code null}=미상(직결이면 논리 축과 같으므로 수신 쪽이 {@code sourceIp}로 폴백)
- * @param requestsInWindow 슬라이딩 윈도우 동안 이 주체의 요청 수(레이트 급증 신호)
- * @param hourOfDay        요청 시각의 시(0~23, 업무시간 외 신호)
+ * @param sourceIp         출발지 IP(논리 축), {@code null}=미상
+ * @param networkIp        소켓 피어 IP(네트워크 축), {@code null}=미상
+ * @param requestsInWindow 슬라이딩 윈도우 내 이 주체의 요청 수
+ * @param hourOfDay        요청 시각의 시(0~23)
  */
 public record RiskSignals(String sourceIp, String networkIp, int requestsInWindow, int hourOfDay) {
 
-    /** 출발지 IP(논리 축)를 싣는 context 키(게이트웨이→PDP→PIP 공통 어휘). */
     public static final String CTX_SOURCE_IP = "source-ip";
-    /** 소켓 피어 IP(네트워크 축)를 싣는 context 키 — 커널(XDP) L4 신호와 같은 좌표계. */
     public static final String CTX_NETWORK_IP = "network-ip";
-    /** 윈도우 내 요청수를 싣는 context 키. */
     public static final String CTX_REQUESTS_IN_WINDOW = "requests-in-window";
-    /** 요청 시각(시)을 싣는 context 키. */
     public static final String CTX_HOUR_OF_DAY = "hour-of-day";
 
-    /** 네트워크 축 미상 편의 생성자 — 직결(프록시 없음)이면 두 축이 같아 수신 쪽 폴백으로 충분하다. */
-    public RiskSignals(String sourceIp, int requestsInWindow, int hourOfDay) {
-        this(sourceIp, null, requestsInWindow, hourOfDay);
+    /** 직결(프록시 없음) 신호 — 두 축이 같은 좌표이므로 네트워크 축을 생략한다. */
+    public static RiskSignals direct(String sourceIp, int requestsInWindow, int hourOfDay) {
+        return new RiskSignals(sourceIp, null, requestsInWindow, hourOfDay);
     }
 
-    /** 신호가 없을 때의 중립값(IP 미상·레이트 0·시각 정오). 테스트/기본 경로용. */
+    /** 신호가 없을 때의 중립값(IP 미상·레이트 0·시각 정오). 부재는 위험 가중이 아니다. */
     public static RiskSignals none() {
         return new RiskSignals(null, null, 0, 12);
     }
 
     /**
-     * 게이트웨이가 {@link DecisionRequest#context()}에 실은 신호를 복원한다.
-     * 키가 없거나 숫자가 깨졌으면 중립값으로 폴백한다(신호 부재는 위험 가중이 아니라 무가중).
+     * 네트워크 축 IP. 미제공이면 논리 축으로 폴백한다 — 직결에선 두 좌표가 실제로 같아 폴백이 곧 사실이다.
+     * 두 축의 폴백 규칙은 이 메서드가 유일한 정의다(수신 측에서 재구현하지 말 것).
      */
+    public String effectiveNetworkIp() {
+        return networkIp != null && !networkIp.isBlank() ? networkIp : sourceIp;
+    }
+
+    /** {@link DecisionRequest#context()}에 실려 온 신호를 복원한다. 없거나 깨진 값은 중립값으로 폴백. */
     public static RiskSignals fromContext(Map<String, String> context) {
         if (context == null || context.isEmpty()) {
             return none();

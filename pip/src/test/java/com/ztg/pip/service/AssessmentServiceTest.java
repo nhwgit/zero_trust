@@ -45,13 +45,13 @@ class AssessmentServiceTest {
     @Test
     void normal_then_new_ip_and_burst_raises_score_and_bumps_epoch() {
         // 1) 정상: alice(baseline 10, finance, 신뢰), 기존 IP, 폭주 없음, 업무시간 → score 10, epoch 0.
-        PipAssessment first = service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
+        PipAssessment first = service.assess("alice", RiskSignals.direct("1.1.1.1", 0, 12));
         assertThat(first.attributes().subject()).isEqualTo("alice");
         assertThat(first.risk().score()).isEqualTo(10);
         assertThat(first.epoch()).isZero();
 
         // 2) 같은 세션에서 새 IP(+30) + 폭주 70>60(+40) → score 80(임계), 점수 변화 → epoch 1.
-        PipAssessment second = service.assess("alice", new RiskSignals("9.9.9.9", 70, 12));
+        PipAssessment second = service.assess("alice", RiskSignals.direct("9.9.9.9", 70, 12));
         assertThat(second.risk().score()).isEqualTo(80);
         assertThat(second.epoch()).isEqualTo(1L);
         // 설명 가능: 거부 사유에 실릴 기여 신호 내역이 두 신호를 모두 담는다.
@@ -63,8 +63,8 @@ class AssessmentServiceTest {
 
     @Test
     void stable_risk_does_not_bump_epoch() {
-        service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));   // epoch 0
-        PipAssessment again = service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
+        service.assess("alice", RiskSignals.direct("1.1.1.1", 0, 12));   // epoch 0
+        PipAssessment again = service.assess("alice", RiskSignals.direct("1.1.1.1", 0, 12));
         assertThat(again.risk().score()).isEqualTo(10);
         assertThat(again.epoch()).isZero();   // 점수 동일 → 캐시 유지(불필요한 무효화 없음)
         // 점수 불변이면 fan-out도 침묵한다(채널 잡음 없음 = 불필요한 무효화 없음).
@@ -75,7 +75,7 @@ class AssessmentServiceTest {
     void l4_rate_signal_reassesses_subjects_on_that_ip_and_bumps_epoch() {
         // 핵심: 커널(XDP) 신호가 기존 능동 무효화 경로(점수 변화 → epoch bump → fan-out)를 탄다.
         // 1) alice가 IP A에서 정상 관측(score 10, epoch 0) — lastSeenIp=A가 신호→주체 번역의 근거가 된다.
-        service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
+        service.assess("alice", RiskSignals.direct("1.1.1.1", 0, 12));
 
         // 2) 에이전트가 IP A의 L4 레이트 초과를 보고 → alice가 재평가되고(+rate-l4 40) epoch가 오른다.
         List<String> affected = service.applyL4RateSignal("1.1.1.1", 87, 5);
@@ -84,7 +84,7 @@ class AssessmentServiceTest {
         assertThat(published).containsExactly(new Published("alice", 1L));   // fan-out도 같은 순간 발화
 
         // 3) 이후 실제 요청 평가에도 플래그가 살아 있는 동안 rate-l4가 가중된다(hold = 위험적응 유지 기간).
-        PipAssessment next = service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
+        PipAssessment next = service.assess("alice", RiskSignals.direct("1.1.1.1", 0, 12));
         assertThat(next.risk().score()).isEqualTo(50);   // baseline 10 + rate-l4 40
         assertThat(next.risk().explain()).contains("rate-l4");
     }
@@ -95,7 +95,7 @@ class AssessmentServiceTest {
         // "L7 레이트 미상"이지 실측이 아니므로 밴드 기준을 오염시키면 안 되고, rate-burst(+40)→rate-l4(+40)
         // 등점 팩터 교체도 위험 성격 변화라 epoch bump(→fan-out)가 나야 한다.
         // 1) alice가 폭주 중(70>60): score 50(baseline 10 + rate-burst 40), 밴드 true, epoch 0(첫 관측).
-        PipAssessment burst = service.assess("alice", new RiskSignals("1.1.1.1", 70, 12));
+        PipAssessment burst = service.assess("alice", RiskSignals.direct("1.1.1.1", 70, 12));
         assertThat(burst.risk().score()).isEqualTo(50);
         assertThat(state.lastBurstBand("alice")).isTrue();
 
@@ -110,7 +110,7 @@ class AssessmentServiceTest {
         // 3) 다음 실요청이 사이 구간(50)이어도 보존된 밴드로 rate-burst가 유지된다:
         //    10 + rate-burst 40 + rate-l4 40(플래그 생존) = 90. 밴드가 false로 오염됐다면
         //    50 ≤ 진입 임계 60이라 rate-burst가 빠져 50이 됐을 것(발산의 증상).
-        PipAssessment next = service.assess("alice", new RiskSignals("1.1.1.1", 50, 12));
+        PipAssessment next = service.assess("alice", RiskSignals.direct("1.1.1.1", 50, 12));
         assertThat(next.risk().score()).isEqualTo(90);
         assertThat(next.risk().explain()).contains("rate-burst").contains("rate-l4");
         assertThat(next.epoch()).isEqualTo(2L);   // 점수·구성 변화 → 정상 bump
@@ -143,7 +143,7 @@ class AssessmentServiceTest {
         assertThat(service.applyL4RateSignal("6.6.6.6", 99, 5)).isEmpty();
         assertThat(published).isEmpty();
 
-        PipAssessment first = service.assess("alice", new RiskSignals("6.6.6.6", 0, 12));
+        PipAssessment first = service.assess("alice", RiskSignals.direct("6.6.6.6", 0, 12));
         assertThat(first.risk().explain()).contains("rate-l4");
     }
 
@@ -152,16 +152,16 @@ class AssessmentServiceTest {
         // 경계 진동 시나리오: 진입(70>60) 후 레이트가 사이 구간(50)으로 진동해도 밴드가 유지돼
         // 점수가 안 변하고 → epoch bump도 fan-out도 없다. 해제 임계(≤40)까지 내려와야 한 번만 변한다.
         // 단일 임계였다면 50↔70 진동마다 점수가 ±40 출렁여 매번 epoch bump → 전 노드 캐시 무효화 폭풍.
-        PipAssessment enter = service.assess("alice", new RiskSignals("1.1.1.1", 70, 12));
+        PipAssessment enter = service.assess("alice", RiskSignals.direct("1.1.1.1", 70, 12));
         assertThat(enter.risk().score()).isEqualTo(50);   // baseline 10 + rate-burst 40 (첫 관측: bump 없음)
         assertThat(enter.epoch()).isZero();
 
-        PipAssessment held = service.assess("alice", new RiskSignals("1.1.1.1", 50, 12));
+        PipAssessment held = service.assess("alice", RiskSignals.direct("1.1.1.1", 50, 12));
         assertThat(held.risk().score()).isEqualTo(50);    // 사이 구간: 밴드 유지 → 점수 불변
         assertThat(held.epoch()).isZero();                // epoch 안정
         assertThat(published).isEmpty();                  // fan-out 침묵(무효화 폭풍 없음)
 
-        PipAssessment exited = service.assess("alice", new RiskSignals("1.1.1.1", 30, 12));
+        PipAssessment exited = service.assess("alice", RiskSignals.direct("1.1.1.1", 30, 12));
         assertThat(exited.risk().score()).isEqualTo(10);  // 해제 임계 이하: 그때 한 번 변화
         assertThat(exited.epoch()).isEqualTo(1L);
         assertThat(published).containsExactly(new Published("alice", 1L));
@@ -172,21 +172,21 @@ class AssessmentServiceTest {
         // 순간 신호의 약점 차단: IP 변화 직후의 재평가(비교 기준은 이미 새 IP)가 가중을 되돌리면
         // 탈취 DENY가 고위험 TTL(~1s)짜리 스파이크가 되어 재시도로 우회된다. hold 창(30s) 동안
         // 같은 신호명·가중치가 유지돼 점수가 안정(epoch 잡음 없음)되고, 창이 끝날 때 한 번만 하강한다.
-        PipAssessment first = service.assess("alice", new RiskSignals("1.1.1.1", 0, 12));
+        PipAssessment first = service.assess("alice", RiskSignals.direct("1.1.1.1", 0, 12));
         assertThat(first.risk().score()).isEqualTo(10);              // 기준 IP 고정
 
-        PipAssessment changed = service.assess("alice", new RiskSignals("9.9.9.9", 0, 12));
+        PipAssessment changed = service.assess("alice", RiskSignals.direct("9.9.9.9", 0, 12));
         assertThat(changed.risk().score()).isEqualTo(40);            // +ip-change 30
         assertThat(changed.epoch()).isEqualTo(1L);
 
         nowNanos += Duration.ofSeconds(10).toNanos();
-        PipAssessment retried = service.assess("alice", new RiskSignals("9.9.9.9", 0, 12));
+        PipAssessment retried = service.assess("alice", RiskSignals.direct("9.9.9.9", 0, 12));
         assertThat(retried.risk().score()).isEqualTo(40);            // 재시도에도 점수 유지(hold)
         assertThat(retried.epoch()).isEqualTo(1L);                   // 점수 불변 → epoch 안정
         assertThat(retried.risk().explain()).contains("within hold window");
 
         nowNanos += Duration.ofSeconds(21).toNanos();                // 총 31s > hold 30s
-        PipAssessment recovered = service.assess("alice", new RiskSignals("9.9.9.9", 0, 12));
+        PipAssessment recovered = service.assess("alice", RiskSignals.direct("9.9.9.9", 0, 12));
         assertThat(recovered.risk().score()).isEqualTo(10);          // 창 경과: 자동 해제(가역성)
         assertThat(recovered.epoch()).isEqualTo(2L);                 // 하강도 변화 → 한 번의 bump로 수렴
 
