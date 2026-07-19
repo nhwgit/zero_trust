@@ -9,6 +9,8 @@ import java.util.function.LongSupplier;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -31,13 +33,25 @@ import com.ztg.common.risk.BurstBandPolicy;
 @Component
 public class DecisionCache {
 
+    private static final Logger log = LoggerFactory.getLogger(DecisionCache.class);
+
+    /** fan-out epoch 수신 클램프 — 학습값 대비 이 초과 점프는 위조/오염으로 보고 무시한다. */
+    private static final long MAX_REMOTE_EPOCH_JUMP = 1000;
+
     private record Key(DecisionRequest request, long epoch) {}
 
     private record Entry(DecisionResponse response, long expiresAtNanos) {}
 
+    /** 학습 시각을 함께 든 epoch — 시각은 신뢰 경로의 확인(전진 또는 같은 값 재학습)에만 갱신된다. */
+    private record KnownEpoch(long epoch, long learnedAtNanos) {}
+
     private final ConcurrentHashMap<Key, Entry> store = new ConcurrentHashMap<>();
-    /** 주체별 학습된 현재 epoch. 단조 증가 — 더 큰 값만 채택. */
-    private final ConcurrentHashMap<String, Long> knownEpochs = new ConcurrentHashMap<>();
+    /**
+     * 주체별 학습된 현재 epoch. 단조 증가(더 큰 값만 채택)하되, {@code epochForgetAfter} 동안 신뢰
+     * 경로(put)의 확인이 없으면 잊는다 — 권위자(PIP) 재기동으로 epoch가 후퇴했을 때 옛 큰 값이 조회
+     * 세대를 영영 붙들어 캐시가 사실상 꺼지는 상태를 시간 바운드로 자기치유한다.
+     */
+    private final ConcurrentHashMap<String, KnownEpoch> knownEpochs = new ConcurrentHashMap<>();
     /** 주체별 직전 레이트 밴드(true=폭주). 전이 순간만 바이패스하는 엣지 트리거의 비교 기준. */
     private final ConcurrentHashMap<String, Boolean> lastBand = new ConcurrentHashMap<>();
     private final boolean enabled;
@@ -47,6 +61,7 @@ public class DecisionCache {
     private final BurstBandPolicy burstBandPolicy;
     private final int maxSize;
     private final long sweepIntervalNanos;
+    private final long epochForgetNanos;
     /** 다음 sweep 허용 시각. CAS로 선점해 한 시점에 한 스레드만 스캔한다. */
     private final AtomicLong nextSweepAtNanos;
     private final LongSupplier nanoClock;
@@ -72,6 +87,7 @@ public class DecisionCache {
         this.burstBandPolicy = new BurstBandPolicy(rate.burstThreshold(), rate.burstExitThreshold());
         this.maxSize = props.maxSize();
         this.sweepIntervalNanos = props.sweepInterval().toNanos();
+        this.epochForgetNanos = props.epochForgetAfter().toNanos();
         this.nanoClock = nanoClock;
         this.nextSweepAtNanos = new AtomicLong(nanoClock.getAsLong());
         this.hits = meterRegistry.counter("ztg.pdp.cache", "result", "hit");
@@ -92,7 +108,7 @@ public class DecisionCache {
             bypasses.increment();
             return null;
         }
-        Key key = cacheKey(request, knownEpochs.getOrDefault(request.subject(), 0L));
+        Key key = cacheKey(request, knownEpochFor(request.subject()));
         Entry entry = store.get(key);
         // 차이로 비교해 nanoTime 래핑에 안전.
         if (entry == null || nanoClock.getAsLong() - entry.expiresAtNanos() >= 0) {
@@ -151,17 +167,48 @@ public class DecisionCache {
         }
     }
 
+    /**
+     * 신뢰 경로(put) 학습. 같은 값 재학습도 시각을 갱신한다({@code >=}) — PDP 왕복이 그 세대를
+     * 재확인한 것이라, 안정 주체가 망각 주기마다 불필요한 재동기화 미스를 내지 않는다.
+     * 후퇴한 권위자(PIP 재기동)의 더 작은 epoch는 확인이 아니므로 갱신 없음 → 망각으로 자기치유.
+     */
     private void learnEpoch(String subject, long epoch) {
-        knownEpochs.merge(subject, epoch, Math::max);
+        knownEpochs.merge(subject, new KnownEpoch(epoch, nanoClock.getAsLong()),
+                (current, candidate) -> candidate.epoch() >= current.epoch() ? candidate : current);
+    }
+
+    /** 학습 epoch 조회 — 망각 기한이 지난 항목은 지우고 미학습(0)으로 취급한다(재기동 후퇴 자기치유). */
+    private long knownEpochFor(String subject) {
+        KnownEpoch known = knownEpochs.get(subject);
+        if (known == null) {
+            return 0L;
+        }
+        if (nanoClock.getAsLong() - (known.learnedAtNanos() + epochForgetNanos) >= 0) {
+            knownEpochs.remove(subject, known);
+            return 0L;
+        }
+        return known.epoch();
     }
 
     /**
      * 다른 게이트웨이가 유발한 epoch 상승을 Redis fan-out으로 받아 즉시 학습한다 — 이 노드가 PDP 왕복
      * 없이도 옛 엔트리가 키-아웃된다. 단조(max) 학습이라 옛/중복 메시지는 무시(부활 없음).
+     *
+     * <p>fan-out 페이로드는 검증 없는 {@code (subject, epoch)}라, 학습값 대비 과대 점프는 위조/오염으로
+     * 보고 버린다 — 채택하면 그 주체의 조회 세대가 닿지 않는 값으로 점프해 영구 캐시 미스가 된다.
+     * 버려도 안전 방향: 무효화는 로컬 lazy 학습·TTL 백스톱이 이어받는다.
      */
     public void applyRemoteEpoch(String subject, long epoch) {
-        long prior = knownEpochs.getOrDefault(subject, 0L);
-        learnEpoch(subject, epoch);
+        long prior = knownEpochFor(subject);
+        if (epoch - prior > MAX_REMOTE_EPOCH_JUMP) {
+            log.warn("ignoring implausible fan-out epoch for subject={}: {} (known={}, max jump={})",
+                    subject, epoch, prior, MAX_REMOTE_EPOCH_JUMP);
+            return;
+        }
+        // 미신뢰 경로는 전진만 시각 갱신(엄격 >) — 같은 값 재수신이 확인으로 인정되면
+        // 위조값 반복 전송만으로 망각(자기치유)을 영구히 막을 수 있다.
+        knownEpochs.merge(subject, new KnownEpoch(epoch, nanoClock.getAsLong()),
+                (current, candidate) -> candidate.epoch() > current.epoch() ? candidate : current);
         if (epoch > prior) {
             fanoutApplied.increment();
         }

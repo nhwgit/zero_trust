@@ -1,6 +1,7 @@
 package com.ztg.gateway.cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.util.List;
@@ -27,7 +28,7 @@ import com.ztg.common.model.RiskSignals;
  */
 class DecisionCacheTest {
 
-    /** 기본 캐시: base TTL 60s, 고위험 TTL 1s(score≥50), 폭주 진입>60/해제≤40, 크기 100. 시계 미주입(실시간, 만료 안 걸림). */
+    /** 기본 캐시: base TTL 60s, 고위험 TTL 1s(score≥50), 폭주 진입>60/해제≤40, 크기 100, epoch 망각 120s. 시계 미주입(실시간, 만료 안 걸림). */
     private static DecisionCache cache(boolean enabled) {
         return cache(enabled, System::nanoTime);
     }
@@ -35,7 +36,7 @@ class DecisionCacheTest {
     private static DecisionCache cache(boolean enabled, LongSupplier nanoClock) {
         return new DecisionCache(
                 new DecisionCacheProperties(enabled, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 100,
-                        Duration.ofSeconds(1)),
+                        Duration.ofSeconds(1), Duration.ofSeconds(120)),
                 rate(), new SimpleMeterRegistry(), nanoClock);
     }
 
@@ -43,7 +44,7 @@ class DecisionCacheTest {
     private static DecisionCache smallCache(Duration sweepInterval, LongSupplier nanoClock) {
         return new DecisionCache(
                 new DecisionCacheProperties(true, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 2,
-                        sweepInterval),
+                        sweepInterval, Duration.ofSeconds(120)),
                 rate(), new SimpleMeterRegistry(), nanoClock);
     }
 
@@ -242,6 +243,85 @@ class DecisionCacheTest {
 
         // /a(epoch=2)는 여전히 살아 있다(낮은 fan-out이 학습 epoch를 깎지 못했다는 증거).
         assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();
+    }
+
+    @Test
+    void implausibleRemoteEpochJumpIsIgnored() {
+        // fan-out 페이로드는 검증 없는 (subject, epoch) — 위조/오염된 거대 epoch를 채택하면 조회 세대가
+        // 닿지 않는 값으로 점프해 그 주체는 영구 캐시 미스가 된다. 학습값 대비 1000 초과 점프는 버린다.
+        DecisionCache cache = cache(true);
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 0));
+
+        cache.applyRemoteEpoch("alice", 1001L);   // 점프 1001 > 1000 → 무시
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();
+
+        cache.applyRemoteEpoch("alice", 1000L);   // 경계: 점프 1000은 허용 → 정상 키-아웃
+        assertThat(cache.getIfPresent(request("alice", "/api/a"))).isNull();
+    }
+
+    @Test
+    void epochAuthorityResetHealsAfterForgetWindow() {
+        // PIP 재기동 시나리오: epoch 권위자는 인메모리라 재기동하면 0부터 다시 센다. 학습 epoch(5)에
+        // 소멸이 없으면 이 노드는 옛 큰 세대로 조회 + 새 작은 세대로 적재를 반복 — 캐시가 사실상 꺼진다.
+        AtomicLong nanos = new AtomicLong(1_000_000_000L);
+        DecisionCache cache = cache(true, nanos::get);
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 5));   // 재기동 전: epoch 5 학습
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();
+
+        // 재기동 후 결정은 epoch 0으로 도착 — 적재는 0 세대, 조회는 여전히 5 세대 → 미스(증상 재현).
+        cache.put(request("alice", "/api/b"), decision(Decision.ALLOW, 10, 0));
+        assertThat(cache.getIfPresent(request("alice", "/api/b"))).isNull();
+
+        // 망각 기한(120s) 동안 전진 없음 → 잊는다. 그 사이 모든 엔트리는 TTL(≤60s)로 먼저 만료돼
+        // 옛 세대 부활이 없다. 이후 적재·조회가 0 세대에서 다시 만나 캐시가 히트로 복귀한다(자기치유).
+        nanos.addAndGet(Duration.ofSeconds(121).toNanos());
+        cache.put(request("alice", "/api/b"), decision(Decision.ALLOW, 10, 0));
+        assertThat(cache.getIfPresent(request("alice", "/api/b")).isAllowed()).isTrue();
+    }
+
+    @Test
+    void trustedReconfirmationKeepsEpochAcrossForgetWindow() {
+        // 안정 주체(epoch 전진 없음)도 PDP 왕복(put)이 같은 epoch를 재확인하는 한 학습값이 잊히지
+        // 않는다 — 망각 주기마다 재동기화 미스가 나는 비용을 0으로 만든다(확인 자격은 신뢰 경로에만).
+        AtomicLong nanos = new AtomicLong(1_000_000_000L);
+        DecisionCache cache = cache(true, nanos::get);
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 3));
+
+        nanos.addAndGet(Duration.ofSeconds(70).toNanos());
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 3));   // 같은 epoch 재확인
+
+        // 최초 학습 기준으론 망각 기한(120s)이 지났지만(70+55), 재확인이 시각을 갱신해 3 세대가 유지
+        // → 방금 적재한 엔트리(TTL 60s 내)가 미스 없이 히트한다.
+        nanos.addAndGet(Duration.ofSeconds(55).toNanos());
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();
+    }
+
+    @Test
+    void untrustedReconfirmationDoesNotBlockForgetting() {
+        // fan-out(미신뢰)의 같은 값 재수신은 확인으로 인정하지 않는다 — 인정하면 위조값을 주기 재전송하는
+        // 것만으로 망각(자기치유)을 영구히 막을 수 있다. 오염값은 재전송돼도 기한이 지나면 잊힌다.
+        AtomicLong nanos = new AtomicLong(1_000_000_000L);
+        DecisionCache cache = cache(true, nanos::get);
+        cache.applyRemoteEpoch("alice", 5L);                                      // 오염 학습(점프 5 ≤ 1000)
+
+        nanos.addAndGet(Duration.ofSeconds(70).toNanos());
+        cache.applyRemoteEpoch("alice", 5L);                                      // 같은 값 재전송 — 시각 미갱신
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 0));   // 실제 결정은 0 세대
+        assertThat(cache.getIfPresent(request("alice", "/api/a"))).isNull();      // 조회는 아직 5 세대 → 미스
+
+        nanos.addAndGet(Duration.ofSeconds(55).toNanos());                        // 최초 학습에서 125s > 120s
+        cache.put(request("alice", "/api/a"), decision(Decision.ALLOW, 10, 0));
+        assertThat(cache.getIfPresent(request("alice", "/api/a")).isAllowed()).isTrue();   // 망각 → 치유
+    }
+
+    @Test
+    void epochForgetShorterThanEntryTtlFailsFast() {
+        // 망각이 엔트리 수명보다 짧으면 잊는 순간 살아 있는 옛 세대 엔트리가 부활할 수 있다 — 기동 거부.
+        assertThatThrownBy(() ->
+                new DecisionCacheProperties(true, Duration.ofSeconds(60), Duration.ofSeconds(1), 50, 100,
+                        Duration.ofSeconds(1), Duration.ofSeconds(30)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("epoch-forget-after");
     }
 
     @Test
