@@ -8,13 +8,14 @@
 #   Keycloak(8081):     wsl bash docker/kc-hold.sh   (백그라운드)
 #   resource-api(8082): .\gradlew.bat :resource-api:bootRun
 #   pdp(8084):          $env:BUSINESS_HOUR_START=0; $env:BUSINESS_HOUR_END=24; .\gradlew.bat :pdp:bootRun
-#   pip(8083):          $env:ZTG_PIP_RISK_BURST_THRESHOLD=5;
+#   pip(8083):          $env:ZTG_PIP_RISK_BURST_THRESHOLD=5; $env:ZTG_PIP_RISK_BURST_EXIT_THRESHOLD=4;
 #                       $env:ZTG_PIP_RISK_BUSINESS_HOUR_START=0; $env:ZTG_PIP_RISK_BUSINESS_HOUR_END=24;
 #                       .\gradlew.bat :pip:bootRun
-#   gateway(8080):      $env:RATE_BURST_THRESHOLD=5; .\gradlew.bat :gateway:bootRun
+#   gateway(8080):      $env:RATE_BURST_THRESHOLD=5; $env:RATE_BURST_EXIT_THRESHOLD=4; .\gradlew.bat :gateway:bootRun
 #
 #   - 폭주 임계는 게이트웨이(RATE_BURST_THRESHOLD)와 PIP(ZTG_PIP_RISK_BURST_THRESHOLD)를 같은 값(5)으로
 #     맞춘다: 게이트웨이가 밴드를 넘는 순간 캐시를 바이패스(강제 재평가)하고, 그 재평가에서 PIP가 +레이트 가중을 준다.
+#   - 해제 임계(exit)도 진입(5) 이하로 낮춰야 한다(기본 40) — 히스테리시스 정합(exit<=enter) fail-fast 때문.
 #   - 시각 가중(off-hours)을 빼려고 pip/pdp 업무시간을 0-24로 연다(점수를 예측 가능하게). 위험 신호 축은 이 스모크가,
 #     시간 축은 단위 테스트(고정 Clock)가 검증한다.
 #   - /api/hello를 쓴다(payroll의 부서/디바이스/시간 게이트와 무관하게 '위험점수' 단일 축만 본다).
