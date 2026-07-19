@@ -8,26 +8,40 @@ import java.util.Map;
  * <p>저장 속성({@link SubjectAttributes}: 부서/디바이스/baseline)과 달리, 이 값들은 "지금 이 요청"의
  * 맥락이다. 게이트웨이는 모든 요청(캐시 히트 포함)을 보므로 레이트/IP의 권위 있는 관측자다.
  *
+ * <p><b>IP는 두 좌표계(축)로 나뉜다:</b> {@code sourceIp}(논리 축)는 신뢰 프록시의 XFF를 반영한
+ * "원 클라이언트" IP로 ip-change 판정·캐시 키에 쓰이고, {@code networkIp}(네트워크 축)는 게이트웨이
+ * 소켓의 피어 IP — 커널(XDP)이 패킷에서 보는 것과 같은 좌표다. LB/프록시 뒤에선 두 축이 다르므로
+ * (논리=클라이언트, 네트워크=LB), L4 신호↔주체 번역은 네트워크 축으로만 맞는다.
+ *
  * <p>전송 경로: 게이트웨이가 {@link DecisionRequest#context()}에 {@code CTX_*} 키로 실으면,
  * PDP가 {@link #fromContext(Map)}로 복원해 PIP에 전달한다. 키 상수를 한 곳에 둬 PEP/PDP가 같은
  * 어휘를 쓰게 한다(신호가 없으면 context는 비고, 수신 쪽은 {@link #none()} 중립값으로 폴백한다).
  *
- * @param sourceIp         이번 요청의 출발지 IP(직전 관측과 비교해 IP 변화 신호 산출)
+ * @param sourceIp         이번 요청의 출발지 IP — 논리 축(직전 관측과 비교해 IP 변화 신호 산출)
+ * @param networkIp        게이트웨이가 본 소켓 피어 IP — 네트워크 축(커널 L4 신호와 같은 좌표계).
+ *                         {@code null}=미상(직결이면 논리 축과 같으므로 수신 쪽이 {@code sourceIp}로 폴백)
  * @param requestsInWindow 슬라이딩 윈도우 동안 이 주체의 요청 수(레이트 급증 신호)
  * @param hourOfDay        요청 시각의 시(0~23, 업무시간 외 신호)
  */
-public record RiskSignals(String sourceIp, int requestsInWindow, int hourOfDay) {
+public record RiskSignals(String sourceIp, String networkIp, int requestsInWindow, int hourOfDay) {
 
-    /** 출발지 IP를 싣는 context 키(게이트웨이→PDP→PIP 공통 어휘). */
+    /** 출발지 IP(논리 축)를 싣는 context 키(게이트웨이→PDP→PIP 공통 어휘). */
     public static final String CTX_SOURCE_IP = "source-ip";
+    /** 소켓 피어 IP(네트워크 축)를 싣는 context 키 — 커널(XDP) L4 신호와 같은 좌표계. */
+    public static final String CTX_NETWORK_IP = "network-ip";
     /** 윈도우 내 요청수를 싣는 context 키. */
     public static final String CTX_REQUESTS_IN_WINDOW = "requests-in-window";
     /** 요청 시각(시)을 싣는 context 키. */
     public static final String CTX_HOUR_OF_DAY = "hour-of-day";
 
+    /** 네트워크 축 미상 편의 생성자 — 직결(프록시 없음)이면 두 축이 같아 수신 쪽 폴백으로 충분하다. */
+    public RiskSignals(String sourceIp, int requestsInWindow, int hourOfDay) {
+        this(sourceIp, null, requestsInWindow, hourOfDay);
+    }
+
     /** 신호가 없을 때의 중립값(IP 미상·레이트 0·시각 정오). 테스트/기본 경로용. */
     public static RiskSignals none() {
-        return new RiskSignals(null, 0, 12);
+        return new RiskSignals(null, null, 0, 12);
     }
 
     /**
@@ -39,9 +53,10 @@ public record RiskSignals(String sourceIp, int requestsInWindow, int hourOfDay) 
             return none();
         }
         String ip = context.get(CTX_SOURCE_IP);
+        String networkIp = context.get(CTX_NETWORK_IP);
         int requests = parseOr(context.get(CTX_REQUESTS_IN_WINDOW), 0);
         int hour = parseOr(context.get(CTX_HOUR_OF_DAY), 12);
-        return new RiskSignals(ip, requests, hour);
+        return new RiskSignals(ip, networkIp, requests, hour);
     }
 
     private static int parseOr(String value, int fallback) {

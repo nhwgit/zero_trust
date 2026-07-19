@@ -46,7 +46,7 @@
   <rect x="612" y="411" width="64" height="18" rx="9" fill="#10b981"/>
   <text x="644" y="424" text-anchor="middle" font-size="11" fill="#ffffff">판단 주체</text>
   <text x="390" y="444" text-anchor="middle" font-size="14" font-weight="bold" fill="#065f46">PIP</text>
-  <text x="390" y="468" text-anchor="middle" font-size="13" fill="#065f46">IP→주체 번역(lastSeenIp) → 재평가: rate-l4 +40 → epoch bump → 능동 무효화</text>
+  <text x="390" y="468" text-anchor="middle" font-size="13" fill="#065f46">IP→주체 번역(lastNetworkIp) → 재평가: rate-l4 +40 → epoch bump → 능동 무효화</text>
   <text x="390" y="490" text-anchor="middle" font-size="13" fill="#065f46">+ 에지 차단 지시(enforcement)를 ack로 반환</text>
 
   <text x="405" y="548" text-anchor="middle" font-size="12" fill="#64748b">커널은 판단하지 않는다 — 차단의 지속은 판단 주체(PIP)의 갱신에 의존하고, TTL이 만료되면 커널이 스스로 통과시킨다(fail-safe).</text>

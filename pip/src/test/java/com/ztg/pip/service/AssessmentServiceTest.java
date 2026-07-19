@@ -117,6 +117,26 @@ class AssessmentServiceTest {
     }
 
     @Test
+    void l4_signal_behind_lb_translates_via_network_axis_without_corrupting_logical_ip() {
+        // H3 시나리오: LB/프록시 뒤에선 논리 IP(XFF 첫 홉)와 네트워크 IP(소켓 피어=LB)가 다르다.
+        // 커널(XDP)은 패킷 소스(네트워크 축)만 보므로, 번역·플래그 매칭이 논리 축이면 rate-l4가 영영 미반영.
+        service.assess("alice", new RiskSignals("203.0.113.7", "10.0.0.9", 0, 12));   // score 10, epoch 0
+
+        // 1) 신호 IP(네트워크 축)로 주체가 번역되고, rate-l4(+40)로 epoch가 오른다(능동 무효화).
+        List<String> affected = service.applyL4RateSignal("10.0.0.9", 87, 5);
+        assertThat(affected).containsExactly("alice");
+        assertThat(state.currentEpoch("alice")).isEqualTo(1L);
+        assertThat(published).containsExactly(new Published("alice", 1L));
+
+        // 2) 재평가가 논리 기준(lastSeenIp)을 패킷 IP로 오염시키지 않는다 — 다음 실요청(같은 논리 IP)에서
+        //    ip-change 오탐 없이 rate-l4만 가중된다: baseline 10 + rate-l4 40 = 50.
+        assertThat(state.lastSeenIp("alice")).isEqualTo("203.0.113.7");
+        PipAssessment next = service.assess("alice", new RiskSignals("203.0.113.7", "10.0.0.9", 0, 12));
+        assertThat(next.risk().score()).isEqualTo(50);
+        assertThat(next.risk().explain()).contains("rate-l4").doesNotContain("ip-change");
+    }
+
+    @Test
     void l4_rate_signal_for_unseen_ip_touches_no_subject_but_holds_flag() {
         // 신호 IP를 쓰는 주체가 없으면 재평가 대상 없음 — 다만 플래그는 남아, 그 IP로 처음 오는
         // 평가부터 가중된다(신호가 로그인보다 먼저 도착하는 경합에도 안전).

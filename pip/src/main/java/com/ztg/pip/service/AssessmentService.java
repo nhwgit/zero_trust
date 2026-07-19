@@ -84,8 +84,13 @@ public class AssessmentService {
         String lastSeenIp = state.lastSeenIp(subject);                 // ① 변화 판정 기준(덮기 전에 읽는다)
         boolean ipChangeHeld = state.ipChangeHeld(subject);            // ① hold 창 내 변화 이력(신호 유지 기준)
         Boolean priorBand = state.lastBurstBand(subject);              // ① 히스테리시스 판정 기준(동일 원칙)
-        // 이 요청의 출발지 IP에 커널 L4 플래그가 살아 있으면 위험 가중(만료면 null=무가중, fail-open).
-        L4RateFlagStore.Flag l4Flag = l4Flags.activeFlag(effective.sourceIp());
+        // 네트워크 축(소켓 피어 = 커널이 보는 좌표). 미제공(직결/구식 발신)이면 논리 축과 같다고 본다 —
+        // 프록시가 없으면 두 좌표가 실제로 일치하므로 폴백이 곧 사실이다.
+        String networkIp = effective.networkIp() != null && !effective.networkIp().isBlank()
+                ? effective.networkIp() : effective.sourceIp();
+        // 이 요청의 네트워크 축 IP에 커널 L4 플래그가 살아 있으면 위험 가중(만료면 null=무가중, fail-open).
+        // 플래그 키는 패킷 소스 IP라 논리 축(XFF 기반)이 아닌 네트워크 축으로 맞춰야 LB 뒤에서도 매칭된다.
+        L4RateFlagStore.Flag l4Flag = l4Flags.activeFlag(networkIp);
         RiskAssessment risk = riskEngine.assess(attrs, effective, lastSeenIp, ipChangeHeld, priorBand, l4Flag);
 
         long before = state.currentEpoch(subject);                     // bump 여부 판정 기준
@@ -93,6 +98,7 @@ public class AssessmentService {
         long epoch = state.recordScore(subject, risk.score(),
                 risk.factors().stream().map(RiskFactor::signal).collect(Collectors.toSet()));
         state.recordIp(subject, effective.sourceIp());                 // ③ 다음 비교 기준 갱신(변화면 hold 시작)
+        state.recordNetworkIp(subject, networkIp);                     // ③ L4 신호↔주체 번역의 매칭 기준 갱신
         if (recordBand) {
             // ③ 이번 밴드 기록 — 점수에 반영된 판정과 같은 순수 함수를 같은 입력으로 다시 불러 항상 일치한다.
             state.recordBurstBand(subject, riskEngine.burstBand(effective.requestsInWindow(), priorBand));
@@ -109,23 +115,31 @@ public class AssessmentService {
 
     /**
      * 커널(XDP) 에이전트의 L4 레이트 신호를 반영한다: ① 소스 IP를 hold 동안 플래그하고,
-     * ② 그 IP를 직전 관측으로 가진 주체들을 즉시 재평가한다 — rate-l4 가중으로 점수가 변하면
-     * {@link #assess} 안에서 epoch bump + fan-out이 그대로 일어난다(능동 무효화 경로 재사용).
+     * ② 그 IP를 <b>네트워크 축</b> 직전 관측으로 가진 주체들을 즉시 재평가한다 — rate-l4 가중으로
+     * 점수가 변하면 {@link #assess} 안에서 epoch bump + fan-out이 그대로 일어난다(능동 무효화 경로 재사용).
      *
-     * <p>재평가 신호는 "PIP가 지금 아는 것"만 싣는다: 출발지 IP는 신호의 IP(직전 관측과 같아 IP 변화 무가중),
-     * L7 레이트는 0(커널 신호는 L7 요청 수를 모름 — rate.l4와 rate.l7 분리 원칙), 시각은 현재.
+     * <p>커널이 보는 것은 <b>패킷 소스 IP</b>(네트워크 축)다 — 주체 번역과 플래그 매칭 모두 이 축으로
+     * 한다. 논리 축({@code lastSeenIp}, XFF 기반)으로 맞추면 LB/프록시 뒤에서 좌표가 달라 번역이
+     * 영영 실패한다(H3 증상).
+     *
+     * <p>재평가 신호는 "PIP가 지금 아는 것"만 싣는다: 논리 IP는 주체의 <b>직전 관측 그대로</b>
+     * (비교 기준과 같아 IP 변화 무가중·기준 무오염 — 패킷 IP를 논리 축에 실으면 LB 뒤에서
+     * ip-change가 오탐되고 lastSeenIp가 오염된다), 네트워크 IP는 신호의 IP, L7 레이트는 0
+     * (커널 신호는 L7 요청 수를 모름 — rate.l4와 rate.l7 분리 원칙), 시각은 현재.
      * 다음 실제 요청이 오면 게이트웨이가 진짜 휘발성 신호로 다시 평가한다.
      * 단 이 0은 <b>미상이지 실측이 아니므로</b> 밴드 기준은 기록하지 않는다({@code recordBand=false}) —
      * 실제 폭주 중인 주체의 히스테리시스 기준이 가짜 0으로 오염되는 것을 막는다.
      *
+     * @param sourceIp 커널이 관측한 패킷 소스 IP(네트워크 축)
      * @return 재평가된 주체 목록(신호 IP를 쓰는 주체가 없으면 빈 목록 — 플래그는 남아 다음 평가에 반영)
      */
     public List<String> applyL4RateSignal(String sourceIp, long synsInWindow, int windowSeconds) {
         l4Flags.flag(sourceIp, synsInWindow, windowSeconds);
-        List<String> affected = state.subjectsByLastSeenIp(sourceIp);
+        List<String> affected = state.subjectsByNetworkIp(sourceIp);
         int hour = LocalTime.now(clock).getHour();
         for (String subject : affected) {
-            PipAssessment reassessed = assess(subject, new RiskSignals(sourceIp, 0, hour), false);
+            PipAssessment reassessed =
+                    assess(subject, new RiskSignals(state.lastSeenIp(subject), sourceIp, 0, hour), false);
             log.info("l4-rate signal ip={} syns={}/{}s -> reassess subject={} score={} epoch={}",
                     sourceIp, synsInWindow, windowSeconds, subject,
                     reassessed.risk().score(), reassessed.epoch());

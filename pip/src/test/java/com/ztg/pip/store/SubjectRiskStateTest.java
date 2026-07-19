@@ -8,8 +8,9 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
- * 주체 위험 상태(직전 IP + IP 변화 hold + epoch) 검증 — 기록/조회/리셋, 미상 IP 무시,
- * 점수·팩터 구성 변화 시 epoch bump, hold의 시작/연장/만료(가짜 단조 시계로 결정적).
+ * 주체 위험 상태(직전 IP 두 축 + IP 변화 hold + epoch) 검증 — 기록/조회/리셋, 미상 IP 무시,
+ * 점수·팩터 구성 변화 시 epoch bump, hold의 시작/연장/만료(가짜 단조 시계로 결정적),
+ * 네트워크 축(L4 신호↔주체 번역)의 논리 축 분리.
  */
 class SubjectRiskStateTest {
 
@@ -119,6 +120,35 @@ class SubjectRiskStateTest {
     }
 
     @Test
+    void translates_subjects_by_network_axis_not_logical_axis() {
+        // LB/프록시 뒤 시나리오: 논리 축(XFF)과 네트워크 축(소켓 피어)이 다르다. 커널 L4 신호는
+        // 패킷 소스(네트워크 축)로 도착하므로 번역은 네트워크 축으로만 맞아야 한다(H3).
+        state.recordIp("alice", "203.0.113.7");                       // 논리 축
+        state.recordNetworkIp("alice", "10.0.0.9");                   // 네트워크 축(=LB IP)
+        assertThat(state.subjectsByNetworkIp("10.0.0.9")).containsExactly("alice");
+        assertThat(state.subjectsByNetworkIp("203.0.113.7")).isEmpty();   // 논리 IP로는 못 찾는 게 맞다
+        assertThat(state.subjectsByNetworkIp(null)).isEmpty();
+    }
+
+    @Test
+    void network_ip_record_does_not_touch_logical_axis_or_hold() {
+        state.recordIp("alice", "1.2.3.4");
+        state.recordNetworkIp("alice", "10.0.0.9");
+        state.recordNetworkIp("alice", "10.0.0.10");                  // 네트워크 경로 변경은 위험 신호가 아니다
+        assertThat(state.lastSeenIp("alice")).isEqualTo("1.2.3.4");   // 논리 기준 무오염
+        assertThat(state.ipChangeHeld("alice")).isFalse();            // hold도 시작되지 않음
+        assertThat(state.subjectsByNetworkIp("10.0.0.10")).containsExactly("alice");
+    }
+
+    @Test
+    void blank_or_null_network_ip_does_not_overwrite_baseline() {
+        state.recordNetworkIp("alice", "10.0.0.9");
+        state.recordNetworkIp("alice", null);
+        state.recordNetworkIp("alice", "  ");
+        assertThat(state.subjectsByNetworkIp("10.0.0.9")).containsExactly("alice");   // 미상은 기준을 덮지 않음
+    }
+
+    @Test
     void records_and_reads_last_burst_band() {
         assertThat(state.lastBurstBand("alice")).isNull();          // 첫 관측 전(히스테리시스 기준 없음)
         state.recordBurstBand("alice", true);
@@ -154,9 +184,11 @@ class SubjectRiskStateTest {
         recordScore("alice", 80);                              // bump → epoch 1
         state.recordIp("alice", "1.2.3.4");
         state.recordIp("alice", "9.9.9.9");                          // hold 시작
+        state.recordNetworkIp("alice", "10.0.0.9");
         state.recordBurstBand("alice", true);
         state.evict("alice");
         assertThat(state.lastSeenIp("alice")).isNull();              // 다음 관측은 첫 관측(변화 아님)
+        assertThat(state.subjectsByNetworkIp("10.0.0.9")).isEmpty(); // 네트워크 축도 리셋
         assertThat(state.ipChangeHeld("alice")).isFalse();           // hold도 리셋
         assertThat(state.lastBurstBand("alice")).isNull();           // 밴드 기준도 리셋
         // epoch는 보존 — GW가 단조(max)로 학습하므로 되돌리면 조회(옛 큰 epoch)/적재(새 작은 epoch)가

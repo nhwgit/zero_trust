@@ -52,6 +52,8 @@ import reactor.test.StepVerifier;
  *   <li>토큰 유효 + PDP 호출 실패 → 403 (fail-close), 백엔드 미호출.</li>
  *   <li>인가 결정이 ztg.authz.decisions 카운터에 decision/cause 태그로 집계됨(관측).</li>
  *   <li>XFF 신뢰 경계: 신뢰 발신(loopback)의 XFF만 채택, 비신뢰/미상 발신의 XFF는 무시.</li>
+ *   <li>IP 두 축 분리: source-ip(논리, XFF 반영)와 별개로 network-ip(소켓 피어)를 항상 전달 —
+ *       커널(XDP) L4 신호와 같은 좌표계를 PIP에 공급한다.</li>
  * </ul>
  */
 class JwtAuthGlobalFilterTest {
@@ -290,6 +292,8 @@ class JwtAuthGlobalFilterTest {
         // 게이트웨이가 관측한 IP(신뢰 발신의 XFF 첫 홉)·레이트·시각이 PDP 질의 context에 RiskSignals 키로 실린다.
         java.util.Map<String, String> ctx = sent.getValue().context();
         assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP)).isEqualTo("203.0.113.7");
+        // 네트워크 축은 논리 축(XFF)과 별개로 항상 소켓 피어 — 커널(XDP)이 보는 좌표와 같은 축이다.
+        assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_NETWORK_IP)).isEqualTo("127.0.0.1");
         assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_REQUESTS_IN_WINDOW)).isEqualTo("1");
         assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_HOUR_OF_DAY)).isEqualTo("9");
     }
@@ -311,6 +315,9 @@ class JwtAuthGlobalFilterTest {
         // 클라이언트가 직접 쓴 XFF는 자기 신고라 무시된다 — 위조 XFF로 ip-change 회피 불가.
         assertThat(sent.getValue().context().get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP))
                 .isEqualTo("198.51.100.9");
+        // 직결(프록시 없음)이면 두 축이 일치한다.
+        assertThat(sent.getValue().context().get(com.ztg.common.model.RiskSignals.CTX_NETWORK_IP))
+                .isEqualTo("198.51.100.9");
     }
 
     @Test
@@ -327,6 +334,8 @@ class JwtAuthGlobalFilterTest {
         StepVerifier.create(filter.filter(exchange, e -> Mono.empty())).verifyComplete();
 
         assertThat(sent.getValue().context().get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP)).isNull();
+        // 피어를 모르면 네트워크 축도 부재(키 자체를 싣지 않음 — 신호 부재는 무가중).
+        assertThat(sent.getValue().context().get(com.ztg.common.model.RiskSignals.CTX_NETWORK_IP)).isNull();
     }
 
     @Test

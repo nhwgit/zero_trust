@@ -12,7 +12,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * 주체별 <b>지속(stateful)</b> 위험 맥락 — 직전 관측 IP + IP 변화 hold + 능동 무효화 epoch + 직전 위험점수 + 직전 폭주 밴드.
+ * 주체별 <b>지속(stateful)</b> 위험 맥락 — 직전 관측 IP(논리·네트워크 두 축) + IP 변화 hold + 능동 무효화 epoch + 직전 위험점수 + 직전 폭주 밴드.
+ *
+ * <p><b>IP는 두 축으로 기억한다:</b> 논리 축({@code lastSeenIp}, 신뢰 프록시 XFF 반영)은 ip-change 판정의
+ * 비교 기준이고, 네트워크 축({@code lastNetworkIp}, 게이트웨이 소켓 피어)은 커널(XDP) L4 신호↔주체 번역의
+ * 매칭 기준이다 — LB/프록시 뒤에선 두 좌표가 달라, 한 축으로 겸하면 번역이 깨진다({@link #subjectsByNetworkIp}).
  *
  * <p>IP 변화 신호는 "지금 IP가 직전과 다른가"라 직전 값을 기억해야 한다(휘발성 신호와 달리 상태가 필요).
  * 슬라이딩 윈도우 레이트는 모든 요청을 보는 게이트웨이가 관측하므로 여기 두지 않는다.
@@ -45,36 +49,43 @@ public class SubjectRiskState {
     /**
      * 주체별 위험 맥락 스냅샷(불변). {@code lastScore=null}=점수 미관측(이때 {@code lastFactors}도 null),
      * {@code lastBurstBand=null}=밴드 미관측, {@code ipChangeHoldUntilNanos=null}=활성 hold 없음
-     * (변화 미관측 또는 만료 후 새 변화 없음).
+     * (변화 미관측 또는 만료 후 새 변화 없음), {@code lastNetworkIp=null}=네트워크 축 미관측.
      *
      * <p>필드 하나만 바꾼 새 스냅샷은 {@code with*} 메서드로 만든다 — 위치 기반 {@code new State(...)}를 이
      * record 안에 가둬, 호출부는 "무엇이 바뀌는가"만 드러내고 필드 순서 실수(footgun)를 한 곳으로 모은다.
      */
-    private record State(String lastSeenIp, long epoch, Integer lastScore, Set<String> lastFactors,
-                         Boolean lastBurstBand, Long ipChangeHoldUntilNanos) {
+    private record State(String lastSeenIp, String lastNetworkIp, long epoch, Integer lastScore,
+                         Set<String> lastFactors, Boolean lastBurstBand, Long ipChangeHoldUntilNanos) {
 
         /** 모든 필드가 빈 초기 스냅샷 — 첫 관측(주체 미기록)의 출발점. 불변이라 공유해도 안전. */
-        static final State EMPTY = new State(null, 0L, null, null, null, null);
+        static final State EMPTY = new State(null, null, 0L, null, null, null, null);
 
-        /** 이번 IP와 hold 만료 시각을 반영한다(IP 변화 판정·hold 시작은 호출부가 계산해 넘긴다). */
+        /** 이번 IP(논리 축)와 hold 만료 시각을 반영한다(IP 변화 판정·hold 시작은 호출부가 계산해 넘긴다). */
         State withIp(String ip, Long holdUntilNanos) {
-            return new State(ip, epoch, lastScore, lastFactors, lastBurstBand, holdUntilNanos);
+            return new State(ip, lastNetworkIp, epoch, lastScore, lastFactors, lastBurstBand, holdUntilNanos);
+        }
+
+        /** 이번 네트워크 축 IP를 반영한다(커널 L4 신호↔주체 번역의 매칭 기준). */
+        State withNetworkIp(String networkIp) {
+            return new State(lastSeenIp, networkIp, epoch, lastScore, lastFactors, lastBurstBand,
+                    ipChangeHoldUntilNanos);
         }
 
         /** 이번 점수·팩터 구성을 반영한다. {@code bump=true}(위험 변화)면 epoch를 +1 한다(능동 무효화 토큰). */
         State withScore(int score, Set<String> factors, boolean bump) {
-            return new State(lastSeenIp, bump ? epoch + 1 : epoch, score, factors, lastBurstBand,
-                    ipChangeHoldUntilNanos);
+            return new State(lastSeenIp, lastNetworkIp, bump ? epoch + 1 : epoch, score, factors,
+                    lastBurstBand, ipChangeHoldUntilNanos);
         }
 
         /** 이번 폭주 밴드를 반영한다(다음 평가의 히스테리시스 기준). */
         State withBand(boolean band) {
-            return new State(lastSeenIp, epoch, lastScore, lastFactors, band, ipChangeHoldUntilNanos);
+            return new State(lastSeenIp, lastNetworkIp, epoch, lastScore, lastFactors, band,
+                    ipChangeHoldUntilNanos);
         }
 
         /** 위험 맥락을 비우되 epoch만 보존한다(데모 리셋 — {@link #evict}의 단조성 보존 근거 참고). */
         State resetKeepingEpoch() {
-            return new State(null, epoch, null, null, null, null);
+            return new State(null, null, epoch, null, null, null, null);
         }
     }
 
@@ -96,10 +107,23 @@ public class SubjectRiskState {
         this.nanoClock = nanoClock;
     }
 
-    /** 직전 관측 IP를 반환한다(없으면 {@code null} = 첫 관측 → IP 변화로 치지 않음). */
+    /** 직전 관측 IP(논리 축)를 반환한다(없으면 {@code null} = 첫 관측 → IP 변화로 치지 않음). */
     public String lastSeenIp(String subject) {
         State s = states.get(subject);
         return s == null ? null : s.lastSeenIp();
+    }
+
+    /**
+     * 이번 관측의 네트워크 축 IP(게이트웨이 소켓 피어 = 커널이 패킷에서 보는 좌표)를 기록한다 —
+     * L4 신호↔주체 번역({@link #subjectsByNetworkIp})의 매칭 기준. 논리 축({@link #recordIp})과 달리
+     * 변화 판정·hold가 없다(네트워크 경로 변경은 위험 신호가 아니라 관측 좌표의 이동일 뿐이다).
+     * null/blank는 무시(미상은 기준을 덮지 않음 — 논리 축과 같은 원칙).
+     */
+    public void recordNetworkIp(String subject, String networkIp) {
+        if (networkIp == null || networkIp.isBlank()) {
+            return;
+        }
+        states.compute(subject, (k, s) -> (s == null ? State.EMPTY : s).withNetworkIp(networkIp));
     }
 
     /**
@@ -174,22 +198,24 @@ public class SubjectRiskState {
     }
 
     /**
-     * 직전 관측 IP가 {@code sourceIp}인 주체들을 찾는다 — 커널(XDP) L4 신호는 IP 단위로 도착하므로,
-     * 그 IP를 "지금 쓰고 있는" 주체로 번역해야 재평가(epoch bump → 능동 무효화)를 걸 수 있다.
-     * 전수 순회지만 주체 수는 세션 수 규모라 데모/단일 PIP에선 충분하다(역인덱스는 필요해질 때).
+     * 직전 관측의 <b>네트워크 축</b> IP가 {@code networkIp}인 주체들을 찾는다 — 커널(XDP) L4 신호는
+     * <b>패킷 소스 IP</b> 단위로 도착하므로, 같은 좌표계(소켓 피어)로 기록된 축과 맞춰야 번역이 된다.
+     * 논리 축({@code lastSeenIp}, XFF 기반)으로 맞추면 LB/프록시 뒤에서 두 좌표가 달라 번역이 항상
+     * 실패한다(rate-l4 영영 미반영). 전수 순회지만 주체 수는 세션 수 규모라 데모/단일 PIP에선
+     * 충분하다(역인덱스는 필요해질 때).
      */
-    public List<String> subjectsByLastSeenIp(String sourceIp) {
-        if (sourceIp == null || sourceIp.isBlank()) {
+    public List<String> subjectsByNetworkIp(String networkIp) {
+        if (networkIp == null || networkIp.isBlank()) {
             return List.of();
         }
         return states.entrySet().stream()
-                .filter(e -> sourceIp.equals(e.getValue().lastSeenIp()))
+                .filter(e -> networkIp.equals(e.getValue().lastNetworkIp()))
                 .map(Map.Entry::getKey)
                 .toList();
     }
 
     /**
-     * 데모 리셋: 주체의 위험 맥락(직전 IP·IP 변화 hold·직전 점수·직전 밴드)을 비운다 — 다음 관측은 첫 관측으로
+     * 데모 리셋: 주체의 위험 맥락(직전 IP 두 축·IP 변화 hold·직전 점수·직전 밴드)을 비운다 — 다음 관측은 첫 관측으로
      * 취급된다(변화 아님, bump 없음). 단 <b>epoch는 보존</b>한다: 게이트웨이의 epoch 학습이 단조(max)라 여기서
      * 되돌리면 게이트웨이 조회(옛 큰 epoch)와 적재(새 작은 epoch)가 영구히 갈려 그 주체가 캐시 불능이 된다.
      */
