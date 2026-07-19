@@ -13,25 +13,16 @@ import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.util.StringUtils;
 
 /**
- * 게이트웨이 보안 구성.
- *
- * <p>설계 메모: 토큰 검증(enforce)은 Spring Security의 자동 리소스서버 체인이 아니라
- * 커스텀 {@link com.ztg.gateway.filter.JwtAuthGlobalFilter}가 단독으로 수행한다(PEP를 한 곳에 모으기 위함).
- * 그래서 Security 자동설정의 기본 체인은 <b>permitAll</b>로 비활성화해 길을 비켜준다.
- * 단, JWKS 기반 서명/iss/exp 검증을 손수 짜지 않으려고 {@link ReactiveJwtDecoder}만 빌려 쓴다.
+ * 게이트웨이 보안 구성. 토큰 검증(enforce)은 커스텀 {@link com.ztg.gateway.filter.JwtAuthGlobalFilter}가
+ * 단독 수행하므로 기본 보안체인은 permitAll로 비켜주고, 서명/iss/exp 검증용 {@link ReactiveJwtDecoder}만 빌려 쓴다.
  */
 @Configuration
 @EnableWebFluxSecurity
 public class GatewaySecurityConfig {
 
     /**
-     * issuer의 JWKS로 서명을, issuer-uri로 iss/exp를 검증하는 디코더. 커스텀 필터가 사용한다.
-     *
-     * <p><b>jwk-set-uri 분리(컨테이너화):</b> 기본은 {@code fromIssuerLocation}으로 issuer-uri의
-     * .well-known에서 JWKS를 자동 조회한다. 그러나 컨테이너 안에선 토큰의 {@code iss}(예:
-     * {@code localhost:8081})와 게이트웨이가 실제로 닿을 수 있는 Keycloak 주소({@code keycloak:8080})가
-     * 다르다. 이때 {@code ztg.gateway.jwk-set-uri}를 주면 <b>키는 그 URL에서 받고 iss 검증은 issuer-uri로</b>
-     * 유지한다 → 토큰 iss를 바꾸지 않아 기존(호스트 bootRun) 경로와 호환된다.
+     * JWKS 서명 + issuer 검증 디코더. 컨테이너 안에선 토큰 iss와 실제로 닿는 Keycloak 주소가 다르므로,
+     * {@code ztg.gateway.jwk-set-uri}가 있으면 키는 그 URL에서 받고 iss 검증은 issuer-uri로 유지한다.
      */
     @Bean
     ReactiveJwtDecoder jwtDecoder(@Value("${ztg.gateway.issuer-uri}") String issuerUri,
@@ -44,10 +35,7 @@ public class GatewaySecurityConfig {
         return ReactiveJwtDecoders.fromIssuerLocation(issuerUri);
     }
 
-    /**
-     * 자동 보안체인을 무력화한다. 게이트웨이의 인증/인가는 {@link com.ztg.gateway.filter.JwtAuthGlobalFilter}가 맡으므로
-     * 여기서는 모든 교환을 허용하고(httpBasic/formLogin 제거), CSRF도 끈다(순수 토큰 트래픽).
-     */
+    /** 자동 보안체인 무력화 — 모든 교환 허용, CSRF off(순수 토큰 트래픽). */
     @Bean
     SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
         return http

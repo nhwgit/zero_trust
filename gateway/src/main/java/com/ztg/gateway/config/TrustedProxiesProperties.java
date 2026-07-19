@@ -7,12 +7,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
  * XFF 신뢰 경계 설정({@code ztg.gateway.trusted-proxies}) 바인딩 — 소켓 원격주소가 이
- * 목록(IP/CIDR)에 들 때만 {@code X-Forwarded-For}를 출발지 IP로 인정한다
- * ({@link com.ztg.gateway.filter.JwtAuthGlobalFilter} 참조).
- *
- * <p>기본값은 loopback 신뢰 — 모든 데모/스모크가 localhost 경유 XFF 주입으로 IP 변화를
- * 시뮬레이션하므로 기존 스크립트가 무수정 호환된다. 운영이라면 빈 목록(fail-safe: XFF 전면
- * 무시)에서 시작해 실제 LB/프록시 대역만 명시하는 것이 맞다(트레이드오프는 설계 메모 참조).
+ * 목록(IP/CIDR)에 들 때만 {@code X-Forwarded-For}를 출발지 IP로 인정한다.
+ * 기본값은 loopback 신뢰(데모/스모크의 localhost XFF 주입 호환); 빈 목록이면 XFF 전면 무시(fail-safe).
  */
 @ConfigurationProperties("ztg.gateway")
 public record TrustedProxiesProperties(

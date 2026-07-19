@@ -5,10 +5,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
  * 위험 가중치·임계 설정({@code ztg.pip.risk.*}) 바인딩 — {@link RiskEngine}의 설정 입력.
- * {@code @Value} 9개 나열 대신 record로 묶어 생성자 비대를 막고, 테스트가 설정 묶음을 값으로 만든다.
- *
- * <p>같은 네임스페이스의 hold 설정({@code ip-change-hold}·{@code rate-l4-hold})은 점수 산출 입력이
- * 아니라 상태 유지 기간이므로 각 저장소가 따로 바인딩한다(여기 미포함 키는 바인더가 무시).
+ * 같은 네임스페이스의 hold 설정({@code *-hold})은 점수 입력이 아니라 각 저장소가 따로 바인딩한다.
  */
 @ConfigurationProperties("ztg.pip.risk")
 public record RiskProperties(

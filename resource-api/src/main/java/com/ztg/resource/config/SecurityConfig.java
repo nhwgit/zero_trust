@@ -16,25 +16,16 @@ import org.springframework.security.web.SecurityFilterChain;
 import com.ztg.common.web.RequestIdFilter;
 
 /**
- * Resource Server 보안 설정.
- *
- * <p>Keycloak이 발급한 JWT(Bearer)를 검증한다. 서명/만료/issuer 검증은
- * issuer-uri로 자동 구성되는 JwtDecoder가 담당한다(JWKS 공개키로 검증).
- *
- * <p>설계 메모:
- * <ul>
- *   <li><b>STATELESS</b>: 세션을 만들지 않는다. 매 요청을 토큰만으로 인증 — 제로트러스트 기본값.</li>
- *   <li><b>CSRF off</b>: 쿠키 세션이 없는 순수 토큰 API라 CSRF 보호가 불필요.</li>
- *   <li><b>fail-close</b>: anyRequest().authenticated() — 명시적으로 열지 않은 모든 경로는 401.</li>
- * </ul>
+ * Resource Server 보안 설정 — Keycloak JWT(Bearer) 검증. 서명/만료/issuer는 issuer-uri로
+ * 자동 구성되는 JwtDecoder가 담당한다. 세션 없는 STATELESS + CSRF off,
+ * 명시적으로 열지 않은 모든 경로는 401(fail-close).
  */
 @Configuration
 public class SecurityConfig {
 
     /**
-     * @param trustSecret 게이트웨이가 주입하는 내부 신뢰 헤더의 공유 비밀. 코드 기본값을 두지 않는다 —
-     *                    설정 누락이 공개 저장소에 노출된 기본 비밀로 조용히 뜨는 대신 기동 실패(fail-fast)하게
-     *                    한다(gateway 쪽 {@code ztg.gateway.trust-secret}과 동일 원칙; dev 기본값은 yml 몫).
+     * @param trustSecret 게이트웨이 신뢰 헤더의 공유 비밀. 코드 기본값을 두지 않는다 —
+     *                    설정 누락 시 노출된 기본 비밀로 조용히 뜨는 대신 기동 실패(fail-fast).
      */
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http,
@@ -44,24 +35,18 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // 관측 엔드포인트: Prometheus 스크랩용으로 토큰 없이 허용(데모; 운영은 망분리/별도 인증).
+                        // Prometheus 스크랩용으로 토큰 없이 허용(데모; 운영은 망분리/별도 인증).
                         .requestMatchers("/actuator/**").permitAll()
-                        // 관리자 전용: admin 역할이 없으면 403
                         .requestMatchers("/api/admin/**").hasRole("admin")
-                        // 그 외 모든 요청: 유효한 토큰 필요(없으면 401)
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())))
-                // PEP(게이트웨이) 경유 강제: 토큰 인증보다 먼저 신뢰 헤더를 확인해 우회 직접호출을 차단.
+                // 토큰 인증보다 먼저 신뢰 헤더를 확인해 게이트웨이 우회 직접호출을 차단.
                 .addFilterBefore(new GatewayTrustFilter(trustSecret), BearerTokenAuthenticationFilter.class);
         return http.build();
     }
 
-    /**
-     * 요청 추적 ID 필터를 보안 필터체인보다 먼저 등록한다(HIGHEST_PRECEDENCE).
-     * 게이트웨이가 전파한 {@code X-Request-Id}를 MDC에 실어, 토큰 거부(401)나 신뢰헤더
-     * 거부(403) 로그까지 같은 ID로 상관되게 한다(분산 추적).
-     */
+    /** 보안 필터체인보다 먼저 등록(HIGHEST_PRECEDENCE) — 401/403 거부 로그까지 같은 요청 ID로 상관되게. */
     @Bean
     FilterRegistrationBean<RequestIdFilter> requestIdFilter() {
         FilterRegistrationBean<RequestIdFilter> reg = new FilterRegistrationBean<>(new RequestIdFilter());
@@ -69,7 +54,6 @@ public class SecurityConfig {
         return reg;
     }
 
-    /** realm_access.roles → ROLE_* 권한으로 매핑하는 변환기를 토큰 인증에 연결한다. */
     private JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(new KeycloakRealmRoleConverter());

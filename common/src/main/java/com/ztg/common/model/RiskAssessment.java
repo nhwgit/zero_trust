@@ -5,12 +5,9 @@ import java.util.stream.Collectors;
 
 /**
  * 주체의 위험 평가 결과 — 0~100 점수 + 그 점수를 만든 기여 신호 목록.
+ * PIP가 산출하고 PDP가 임계값을 적용한다.
  *
- * <p>PIP가 산출(information point)하고 PDP가 임계값을 적용(decision point)한다.
- * {@code factors}는 점수의 "내역서"라서, PDP가 DENY할 때 reason에 그대로 붙여 설명 가능한 거부를 만든다.
- *
- * @param score   위험 점수(0~100, 높을수록 위험). 생성 시 범위로 clamp 된다.
- * @param factors 점수에 기여한 신호들(설명용). 비어 있을 수 있다(= 위험 신호 없음).
+ * @param score 위험 점수(0~100, 높을수록 위험). 생성 시 범위로 clamp 된다.
  */
 public record RiskAssessment(int score, List<RiskFactor> factors) {
 

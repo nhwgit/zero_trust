@@ -13,10 +13,7 @@ public class PdpApplication {
         SpringApplication.run(PdpApplication.class, args);
     }
 
-    /**
-     * 업무시간 등 시간 기반 정책이 쓰는 시계. 빈으로 분리해 테스트에서 고정 Clock을 주입할 수 있게 한다
-     * (실시간에 의존하면 시간 정책을 결정적으로 검증할 수 없다).
-     */
+    /** 시간 기반 정책용 시계 — 테스트에서 고정 Clock을 주입해 결정적으로 검증하기 위해 빈으로 분리. */
     @Bean
     Clock clock() {
         return Clock.systemDefaultZone();

@@ -24,7 +24,6 @@ public class HelloController {
     /** 유효한 토큰이면 누구나(any authenticated). 토큰의 신원을 그대로 비춰준다. */
     @GetMapping("/hello")
     public Map<String, Object> hello(@AuthenticationPrincipal Jwt jwt) {
-        // 게이트웨이가 전파한 요청ID(MDC)가 이 백엔드 로그에도 찍혀 같은 요청으로 상관된다(분산 추적).
         log.info("serving /api/hello for subject={}", jwt.getClaimAsString("preferred_username"));
         return Map.of(
                 "service", "resource-api",
@@ -34,11 +33,7 @@ public class HelloController {
                 "timestamp", Instant.now().toString());
     }
 
-    /**
-     * 급여 리소스. resource-api 자체는 "인증됨"만 요구하고, <b>누가 언제 어떤 디바이스로</b>
-     * 접근 가능한지(부서/업무시간/디바이스)는 게이트웨이 앞단의 PDP가 ABAC로 판단한다.
-     * 즉 이 핸들러에 도달했다는 것은 PDP가 이미 ALLOW했다는 뜻이다(관심사 분리).
-     */
+    /** 급여 리소스. 여기서는 "인증됨"만 요구 — 부서/시간/디바이스 조건은 앞단 PDP가 ABAC로 이미 판단했다. */
     @GetMapping("/payroll")
     public Map<String, Object> payroll(@AuthenticationPrincipal Jwt jwt) {
         log.info("serving /api/payroll for subject={}", jwt.getClaimAsString("preferred_username"));

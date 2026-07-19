@@ -11,13 +11,8 @@ import com.ztg.common.fanout.EpochFanout;
 import java.nio.charset.StandardCharsets;
 
 /**
- * 다른 게이트웨이가 유발한 epoch 상승을 Redis 채널에서 받아 이 노드의 {@link DecisionCache}에 적용한다.
- *
- * <p>한 노드에서 위험이 올라 PIP가 epoch를 bump하면 PIP가 {@link EpochFanout#CHANNEL}로 publish하고,
- * 이 구독자가 모든 노드에서 그 메시지를 받아 {@link DecisionCache#applyRemoteEpoch}를 호출한다 →
- * 위험을 유발하지 않은 노드도 자기 PDP 왕복을 기다리지 않고 그 주체의 캐시를 즉시 키-아웃한다.
- *
- * <p>한 건의 파싱 실패가 구독을 끊지 않도록 {@link EpochFanout#decode} 예외는 잡아 그 메시지만 버린다.
+ * 다른 게이트웨이가 유발한 epoch 상승을 Redis 채널에서 받아 이 노드의 {@link DecisionCache}에
+ * 적용한다 — 위험을 유발하지 않은 노드도 PDP 왕복 없이 그 주체의 캐시를 즉시 키-아웃한다.
  */
 public class EpochFanoutSubscriber implements MessageListener {
 

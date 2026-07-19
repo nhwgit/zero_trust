@@ -26,11 +26,8 @@ public class PipClient {
         this.restClient = builder.baseUrl(pipBaseUri).build();
     }
 
-    /**
-     * 주체를 휘발성 신호 맥락에서 평가한다. PIP가 저장 속성 + 동적 위험점수 + 현재 epoch를 묶어 돌려준다.
-     */
     public PipAssessment assess(String subject, RiskSignals signals) {
-        // 인바운드 요청의 추적 ID(RequestIdFilter가 MDC에 채움)를 PIP로 이어 전파한다(분산 추적).
+        // MDC의 추적 ID를 PIP로 이어 전파한다(분산 추적).
         String requestId = MDC.get(RequestId.MDC_KEY);
         return restClient.post()
                 .uri("/pip/assess")

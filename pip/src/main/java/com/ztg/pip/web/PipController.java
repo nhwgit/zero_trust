@@ -11,12 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.ztg.common.model.SubjectAttributes;
 
 /**
- * PIP의 HTTP 표면. PDP가 판단 시 주체 속성을 조회한다.
- *
- * <ul>
- *   <li>{@code GET  /pip/attributes/{subject}} — 주체 속성 조회(미등록이면 보수적 기본값).</li>
- *   <li>{@code PUT  /pip/attributes/{subject}} — 데모용 속성 변경(부서/디바이스/위험점수).</li>
- * </ul>
+ * 주체 속성 조회(GET, 미등록이면 보수적 기본값)·데모용 변경(PUT) 표면.
  */
 @RestController
 @RequestMapping("/pip/attributes")
@@ -40,7 +35,6 @@ public class PipController {
                 subject, body.department(), body.deviceTrusted(), body.riskScore()));
     }
 
-    /** PUT 요청 본문 — 변경할 속성만 담는다(주체는 경로에서 가져온다). */
     public record UpdateRequest(String department, boolean deviceTrusted, int riskScore) {
     }
 }
