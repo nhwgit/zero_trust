@@ -93,8 +93,12 @@ TOKEN=$(curl -s -X POST http://localhost:8081/realms/ztg/protocol/openid-connect
 curl -s -o /dev/null "${MTLS[@]}" -X PUT https://localhost:8083/pip/attributes/alice \
     -H 'Content-Type: application/json' -d '{"department":"finance","deviceTrusted":false,"riskScore":10}'
 
-alice() { # 컨테이너 IP로 직접 → 소스 IP가 XDP 관측 IP(172.18.0.1)와 동일. XFF 없음(소켓 주소가 신호).
-    curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Authorization: Bearer $TOKEN" "http://$GWIP:8080/api/hello"
+alice() { # 컨테이너 IP로 직접 → 소스 IP가 XDP 관측 IP(172.18.0.1)와 동일. 기본 XFF 없음(소켓 주소가 신호).
+    # ALICE_XFF를 주면 LB 시뮬레이션: 논리 IP(XFF)와 패킷 IP(소켓)가 갈라진다 — 신호→주체 번역이
+    # 네트워크 축으로 동작해야만 재평가가 이어진다(게이트웨이가 발신 대역을 신뢰해야 XFF 채택:
+    # GATEWAY_TRUSTED_PROXIES에 도커 브리지 대역 추가 후 기동).
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Authorization: Bearer $TOKEN" \
+        ${ALICE_XFF:+-H "X-Forwarded-For: $ALICE_XFF"} "http://$GWIP:8080/api/hello"
 }
 
 echo "== 5. baseline: 정상 alice = ALLOW =="
