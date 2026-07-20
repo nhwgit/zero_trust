@@ -20,6 +20,11 @@ ztg:
     # out-of-band(L4 재평가) 시계의 존. 게이트웨이 zone과 같은 값이어야 시각 판정 좌표가 일치한다
     # (임계 정합과 같은 배포 설정 결합).
     zone: ${PIP_ZONE:Asia/Seoul}
+    # 에지 차단 제외 대역(IP/CIDR) — LB/프록시 뒤 배치에선 커널이 보는 소스가 경유 사용자 전원의
+    # 공유 IP(LB)라, 그 IP에 deny를 내리면 전원이 L4에서 끊긴다. 목록에 든 IP의 신호는 세션 축
+    # 재평가만 하고 enforcement를 생략한다. 기본 빈 값(직결 배치는 제외 불필요) — LB 배치 시
+    # 대역을 명시한다(게이트웨이 trusted-proxies와 같은 부류의 배포 설정 결합).
+    edge-block-exempt: ${PIP_EDGE_BLOCK_EXEMPT:}
   # 다중 GW 능동 무효화 fan-out(Redis pub/sub) 발신. 기본 off — 켜면 epoch 상승을 모든 GW에 즉시 전파한다.
   # off면 Redis에 연결하지 않는다(단일 PIP/테스트 무영향).
   fanout:

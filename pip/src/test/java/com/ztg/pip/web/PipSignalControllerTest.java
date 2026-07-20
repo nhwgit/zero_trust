@@ -1,5 +1,6 @@
 package com.ztg.pip.web;
 
+import com.ztg.pip.config.EdgeBlockExemptProperties;
 import com.ztg.pip.fanout.EpochPublisher;
 import com.ztg.pip.service.AssessmentService;
 import com.ztg.pip.service.RiskEngine;
@@ -12,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
@@ -21,7 +23,8 @@ import com.ztg.common.model.RiskSignals;
 /**
  * 신호 수신 표면 검증 — 핵심은 ack에 실리는 <b>enforcement 지시</b>다:
  * PIP(판단)가 "이 IP를 hold와 같은 TTL 동안 에지에서 차단하라"를 반환하고, 에이전트가 이를
- * 커널 deny map에 번역한다. TTL == hold 동기화(세션 무효화와 에지 차단의 가역성 창 일치)를 검증한다.
+ * 커널 deny map에 번역한다. TTL == hold 동기화(세션 무효화와 에지 차단의 가역성 창 일치)와,
+ * 제외 대역(신뢰 프록시/LB) 신호의 enforcement 생략(공유 IP 오폭 방지)을 검증한다.
  */
 class PipSignalControllerTest {
 
@@ -33,7 +36,8 @@ class PipSignalControllerTest {
     private final AssessmentService service =
             new AssessmentService(new SubjectAttributeStore(), riskEngine, state, silent, l4Flags,
                     Clock.systemDefaultZone());
-    private final PipSignalController controller = new PipSignalController(service, l4Flags);
+    private final PipSignalController controller =
+            new PipSignalController(service, l4Flags, new EdgeBlockExemptProperties(List.of()));
 
     @Test
     void ack_carries_deny_enforcement_with_ttl_synced_to_hold() {
@@ -54,6 +58,32 @@ class PipSignalControllerTest {
         // 주체 번역이 안 돼도(빈 목록) 에지 차단 지시는 나간다 — IP 축 차단은 주체 축과 독립.
         var ack = controller.rateL4(new PipSignalController.RateL4Signal("6.6.6.6", 99, 500, 5));
         assertThat(ack.reassessedSubjects()).isEmpty();
+        assertThat(ack.enforcement().action()).isEqualTo("deny");
+    }
+
+    @Test
+    void exempt_range_signal_reassesses_but_suppresses_enforcement() {
+        // LB 뒤 배치 시뮬레이션: 커널이 보는 소스가 LB 대역(10.0.0.0/8) 공유 IP다.
+        var gated = new PipSignalController(service, l4Flags,
+                new EdgeBlockExemptProperties(List.of("10.0.0.0/8")));
+        service.assess("alice", RiskSignals.direct("10.0.0.9", 0, 12));
+
+        var ack = gated.rateL4(new PipSignalController.RateL4Signal("10.0.0.9", 87, 430, 5));
+
+        // 세션 축(재평가·플래그)은 그대로 — 잃는 건 에지 최적화뿐, 인가 회수는 유지된다.
+        assertThat(ack.reassessedSubjects()).containsExactly("alice");
+        assertThat(l4Flags.activeFlag("10.0.0.9")).isNotNull();
+        // 에지 축은 생략 — 공유 IP를 드랍하면 경유 정상 사용자 전원이 끊긴다(blast radius).
+        assertThat(ack.enforcement()).isNull();
+    }
+
+    @Test
+    void ip_outside_exempt_range_still_gets_deny() {
+        var gated = new PipSignalController(service, l4Flags,
+                new EdgeBlockExemptProperties(List.of("10.0.0.0/8")));
+
+        var ack = gated.rateL4(new PipSignalController.RateL4Signal("6.6.6.6", 99, 500, 5));
+
         assertThat(ack.enforcement().action()).isEqualTo("deny");
     }
 

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 
 import com.ztg.common.model.RiskSignals;
+import com.ztg.common.net.CidrRanges;
 import com.ztg.gateway.config.TrustedProxiesProperties;
 
 import reactor.core.publisher.Mono;
@@ -31,12 +32,12 @@ public class RiskContextObserver {
     public static final String FORWARDED_FOR_HEADER = "X-Forwarded-For";
 
     private final RateObserver rateObserver;
-    private final TrustedProxies trustedProxies;
+    private final CidrRanges trustedProxies;
     private final Clock clock;
 
     public RiskContextObserver(RateObserver rateObserver, TrustedProxiesProperties trustedProxiesProperties, Clock clock) {
         this.rateObserver = rateObserver;
-        this.trustedProxies = TrustedProxies.fromCidrs(trustedProxiesProperties.trustedProxies());
+        this.trustedProxies = CidrRanges.parse(trustedProxiesProperties.trustedProxies(), "ztg.gateway.trusted-proxies");
         this.clock = clock;
     }
 
@@ -66,7 +67,7 @@ public class RiskContextObserver {
      */
     private String clientIp(ServerHttpRequest request, InetAddress peer) {
         String forwarded = request.getHeaders().getFirst(FORWARDED_FOR_HEADER);
-        if (forwarded != null && !forwarded.isBlank() && peer != null && trustedProxies.isTrusted(peer)) {
+        if (forwarded != null && !forwarded.isBlank() && peer != null && trustedProxies.contains(peer)) {
             return forwarded.split(",", 2)[0].trim();
         }
         return peer != null ? peer.getHostAddress() : null;
