@@ -11,6 +11,8 @@
 #   · 서로 다른 소스 IP가 필요하므로 클라이언트는 같은 도커 네트워크의 별도 컨테이너(curl)로 띄운다 —
 #     호스트에서 직접 접속하면 전 클라이언트가 브리지 게이트웨이 IP 하나로 보인다.
 #   · 직결 무회귀 대조: 호스트→localhost:8080(LB 미경유)은 PP 없이 종전대로 동작해야 한다(AUTO 모드).
+#   · gateway 컨테이너를 재생성하면 IP가 바뀌는데 nginx는 기동 시 해석한 upstream IP를 캐시한다 —
+#     LB 경유가 000이면 `docker restart ztg-lb` 먼저.
 
 services:
   lb:

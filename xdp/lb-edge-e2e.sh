@@ -1,11 +1,11 @@
 #!/bin/bash
 # LB 에지 관측 e2e: 클라이언트 → L4 LB(nginx stream, PP 송신) → GW(PP 수신 게이트).
 #   XDP는 LB 컨테이너 veth(진짜 에지)에 attach — 커널이 클라이언트 IP 단위로 SYN을 본다.
-#   검증: ① 플러드 클라이언트만 커널 드랍(000), 같은 LB 경유 정상 클라이언트는 통과(에지 관측+드랍)
-#        ② 직결(호스트→8080, PP 없음)은 무회귀
-#   ⚠️ PP로 공급된 네트워크 축을 통한 "신호→주체 세션 축 번역(alice 403)"은 이 스크립트가 검증하지
-#      않는다 — 라이브 미작동(reactor-netty가 원 클라이언트 좌표 미공급, hardening H11로 규명 이관).
-#      그래서 step 6은 client-a의 차단을 403(세션 축)이 아니라 000(에지 드랍)으로도 통과 처리한다.
+#   검증: ① PP 좌표 번역(세션 축) — rate-l4 신호(클라이언트 IP)가 alice로 번역돼 LB 경유 403, bob은 200
+#        ② 플러드 클라이언트만 커널 드랍(000), 같은 LB 경유 정상 클라이언트는 통과(에지 관측+드랍)
+#        ③ 직결(호스트→8080, PP 없음)은 무회귀
+#   ①은 신호를 PIP에 직접 주입해 결정적으로 본다(플러드 경로는 커널 드랍이 L7 재평가를 선점하는
+#   경합이 있어 세션 축 검증에 못 쓴다). 플러드 후 차단은 그래서 403/000 둘 다 통과 처리한다.
 #
 # 전제: compose-lb 오버레이로 기동(gateway PP on + lb) — 이 스크립트가 확인한다. (root)
 PROJ=/mnt/c/Users/USER/Desktop/nhw/project/keycloak
@@ -103,18 +103,47 @@ curl -s -o /dev/null "${MTLS[@]}" -X DELETE https://localhost:8083/pip/risk/alic
 alice_a() { docker exec ztg-client-a curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Authorization: Bearer $TOKEN" http://ztg-lb:18080/api/hello; }
 bob_b()   { docker exec ztg-client-b curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Authorization: Bearer $BTOKEN" http://ztg-lb:18080/api/hello; }
 
-echo "== 4. baseline: LB 경유 alice(A)=200, bob(B)=200 / 직결(호스트, PP 없음)=200 무회귀 =="
+echo "== 4. 직결 무회귀(먼저) + LB baseline =="
+# 직결을 LB보다 먼저 확인한다 — 같은 alice가 두 경로를 오가면 직결(호스트 IP)과 LB(클라이언트 IP)의
+# 축이 충돌해 ip-change 오탐이 난다. 직결 후 위험 맥락을 리셋해 이후 alice는 LB 경유로만 관측시킨다.
+DIRECT=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/hello)
+check "직결(호스트->8080, PP 미송신) alice -> 200 (무회귀)" "$DIRECT" "200"
+curl -s -o /dev/null "${MTLS[@]}" -X DELETE https://localhost:8083/pip/risk/alice
 alice_a > /dev/null; sleep 1
 check "LB 경유 alice(client-a) -> 200" "$(alice_a)" "200"
 check "LB 경유 bob(client-b) -> 200" "$(bob_b)" "200"
-DIRECT=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/hello)
-check "직결(호스트->8080, PP 미송신) alice -> 200 (무회귀)" "$DIRECT" "200"
 
-echo "== 5. client-a에서 토큰 없는 SYN 플러드 80발 → 에지 XDP는 A의 IP($IP_A) 단위로 관측 =="
+echo "== 5. PP 좌표 번역(세션 축): rate-l4 신호를 A의 IP($IP_A)로 직접 주입 → alice만 403 =="
+ACK=$(curl -s "${MTLS[@]}" -X POST https://localhost:8083/pip/signals/rate-l4 \
+    -H 'Content-Type: application/json' \
+    -d "{\"sourceIp\":\"$IP_A\",\"synsInWindow\":80,\"packetsInWindow\":100,\"windowSeconds\":5}")
+echo "  ack: $ACK"
+echo "$ACK" | grep -q "\"reassessedSubjects\":\[\"alice\"\]" \
+    && echo "  PASS  신호($IP_A) -> alice 번역 (PP 공급 네트워크 축)" \
+    || { echo "  FAIL  ack에 alice 없음 — 네트워크 축에 원 클라이언트 미기록"; FAIL=1; }
+DENY_CODE=""
+for t in $(seq 1 15); do
+    DENY_CODE=$(alice_a)
+    [ "$DENY_CODE" = "403" ] && { echo "  (${t}s 만에 전이)"; break; }
+    sleep 1
+done
+check "신호 후 LB 경유 alice(client-a) -> 403 (재로그인 없는 세션 축 회수)" "$DENY_CODE" "403"
+check "같은 LB 경유 bob(client-b) -> 200 (세션 축 blast radius 없음)" "$(bob_b)" "200"
+
+echo "== 6. 가역성: hold(30s) 만료 후 alice 복귀 (폴링 최대 50s) =="
+ALLOW_CODE=""
+for t in $(seq 1 50); do
+    ALLOW_CODE=$(alice_a)
+    [ "$ALLOW_CODE" = "200" ] && { echo "  (${t}s 만에 복귀)"; break; }
+    sleep 1
+done
+check "hold 만료 후 LB 경유 alice -> 200 (복귀)" "$ALLOW_CODE" "200"
+
+echo "== 7. client-a에서 토큰 없는 SYN 플러드 80발 → 에지 XDP는 A의 IP($IP_A) 단위로 관측 =="
 docker exec ztg-client-a /bin/sh -c 'for i in $(seq 1 80); do curl -s -o /dev/null --max-time 2 http://ztg-lb:18080/api/hello & done; wait'
 echo "flood done"
 
-echo "== 6. PP 좌표 번역: alice(네트워크 축=A IP)가 같은 토큰으로 403 전이 (폴링 최대 15s) =="
+echo "== 8. 플러드 후 client-a 차단 전이 (403=L7 회수 / 000=에지 드랍 선점, 폴링 최대 15s) =="
 DENY_CODE=""
 for t in $(seq 1 15); do
     DENY_CODE=$(alice_a)
@@ -130,7 +159,7 @@ fi
 grep -q "signal $IP_A" "$WORK/agent.log" && echo "  PASS  agent 신호가 클라이언트 IP($IP_A) 단위" \
     || { echo "  FAIL  agent 신호에 $IP_A 없음(에지 관측 실패)"; FAIL=1; }
 
-echo "== 7. 에지 차단: deny map에 A IP 등록 + A는 000, B는 계속 200 =="
+echo "== 9. 에지 차단: deny map에 A IP 등록 + A는 000, B는 계속 200 =="
 DENY_SEEN=0
 for t in $(seq 1 15); do
     N=$("$BPFTOOL" map dump name deny_ips -j 2>/dev/null | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))' 2>/dev/null)
