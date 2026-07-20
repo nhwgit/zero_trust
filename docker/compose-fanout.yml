@@ -1,13 +1,13 @@
 # 다중 게이트웨이 능동 무효화 fan-out 데모용 Redis 브로커 (Redis pub/sub).
 #
 # 용도는 fan-out 채널 + 레이트 공유 집계(윈도우 TTL의 휘발 zset)뿐이라 영속/AOF가 필요 없다
-# (fan-out은 at-most-once + 게이트웨이별 TTL 백스톱, 레이트는 윈도우가 지나면 스스로 소멸). smoke-d1.ps1과 같은
+# (fan-out은 at-most-once + 게이트웨이별 TTL 백스톱, 레이트는 윈도우가 지나면 스스로 소멸). smoke-risk-adaptive.sh와 같은
 # bootRun(평문) 패턴을 그대로 쓰되 — PIP attribute PUT을 위해 평문 PIP가 필요 — Redis만 컨테이너로 띄운다.
 #
 # 기동:  docker compose -f docker/docker-compose.yml -f docker/compose-fanout.yml up -d redis
 # 중지:  docker compose -f docker/docker-compose.yml -f docker/compose-fanout.yml down
 #
-# 나머지(keycloak·pdp·pip·gateway·gateway2)는 호스트 bootRun으로 띄운다 → .\docker\smoke-d1-fanout.ps1 머리말 참조.
+# 나머지(keycloak·pdp·pip·gateway·gateway2)는 호스트 bootRun으로 띄운다 → docker/smoke-fanout.sh 머리말 참조.
 
 services:
   redis:
