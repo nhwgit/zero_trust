@@ -192,7 +192,7 @@ ALLOW가 TTL 동안의 위험 상승을 무시하게 되어 지속검증과 정�
   유발하는 2차 CPU 소모도 막는다.
 
 앞의 세 장치 덕분에, 같은 토큰·같은 세션에서 새 IP나 폭주를 주입하면 재로그인 없이 다음
-호출이 ALLOW에서 DENY로 전이한다. 실제로는 이렇게 보인다 (`smoke-d1.ps1`의 한 장면,
+호출이 ALLOW에서 DENY로 전이한다. 실제로는 이렇게 보인다 (`smoke-risk-adaptive.sh`의 한 장면,
 토큰은 처음 한 번만 발급):
 
 ```text
@@ -271,6 +271,21 @@ X-Denied-Reason: risk score 80 >= threshold 80 [baseline(+10): stored baseline r
   히트율은 99.7%였고, 그중 레이트 밴드 강제 우회는 180초 동안 3회에 그쳤다(나머지 0.3%
   미스는 통상적인 TTL 만료와 최초 채움). 보안을 위한 재평가가 정상 트래픽 성능을 거의
   깎지 않음을 수치로 확인했다.
+
+- **무효화 전파 지연 (다중 게이트웨이):** [§4.4](#44-다중-게이트웨이--fan-out과-전역-레이트-집계-redis)의
+  "위험을 유발하지 않은 노드도 즉시 키-아웃한다"는 주장을 시간으로 측정했다. 한 게이트웨이(GW1)에서
+  위험을 올린 순간부터 **다른** 게이트웨이(GW2)가 같은 토큰을 차단하기까지를 30라운드 반복 측정
+  (`measure-fanout-propagation.sh`).
+
+  | 구간 | 유휴 | 부하 중(타 주체 50 VUs·약 4.6k rps) |
+  | --- | --- | --- |
+  | 위험 트리거 → 타 노드 차단 관측 (p50 / p95) | 25 / 32ms | 44 / 50ms |
+  | 그중 노드 간 전파만 (GW1 DENY 확정 → GW2 차단, p50) | 12ms | 20ms |
+
+  노드 간 무효화가 **수십 ms**에 끝나 어떤 캐시 TTL보다 훨씬 짧고, 무관한 주체의 부하가 걸려도
+  파국이 아니라 완만한 열화(전파 p50 12→20ms)에 그친다 — 보안 불변식(재로그인 없는 교차노드
+  회수)이 성능 부하 아래에서도 유지됨을 수치로 확인했다. 폴링 1회 왕복(수 ms)이 측정 하한이라
+  전파 수치는 상한이며, WSL 가상 환경이라 절대치가 아닌 상대 특성으로 해석한다.
 
 ### 5.1 패킷레벨 관측 — mTLS를 와이어에서 확인
 
@@ -373,11 +388,12 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/hello
 
 | 스크립트 | 보이는 것 |
 |---|---|
-| `smoke-phase2.ps1` | JWT 검증 + 게이트웨이 enforce |
-| `smoke-phase3.ps1` | PDP/PIP 정책 분리 (payroll 조건부 허용) |
-| `smoke-phase4-failclose.ps1` | PDP 장애 시 fail-close 차단 |
-| `smoke-d1.ps1` | 재로그인 없이 ALLOW→DENY (새 IP·폭주 주입) |
-| `smoke-d1-fanout.ps1` | 다중 GW Redis fan-out 무효화 + 전역 레이트 집계 (폭주를 두 GW에 반씩 나눠도 검출) |
+| `smoke-gateway-pep.ps1` | JWT 검증 + 게이트웨이 enforce |
+| `smoke-policy-attributes.ps1` | PDP/PIP 정책 분리 (payroll 조건부 허용) |
+| `smoke-failclose.ps1` | PDP 장애 시 fail-close 차단 |
+| `smoke-risk-adaptive.sh` | 재로그인 없이 ALLOW→DENY (새 IP·폭주 주입) |
+| `smoke-fanout.sh` | 다중 GW Redis fan-out 무효화 + 전역 레이트 집계 (폭주를 두 GW에 반씩 나눠도 검출) |
+| `measure-fanout-propagation.sh` | fan-out 무효화 전파 지연 측정 (위험 감지→타 GW 차단 ms) |
 | `smoke-mtls.ps1` | 서비스간 mTLS |
 | `loadtest.js` (k6) | 캐시 before/after 처리량·p99 |
 
@@ -419,10 +435,14 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/hello
   전 클라이언트 공통의 LB IP라, 좌표계를 분리해도([§4.1](#41-설명-가능한-동적-위험점수-pip))
   L4 신호의 판별력 자체가 낮아진다. 오폭 방어까지는 갖췄다 — 세션 축 재평가는 가중합이
   흡수하고, IP 단위 에지 차단은 제외 대역 게이트(`ztg.pip.edge-block-exempt`, [§5.3](#53-커널-레벨-트래픽-제어--위험-판단을-xdp-드랍으로-ebpfxdp))가
-  LB IP 드랍을 막는다. 근본 해법(관측을 진짜 에지(LB 앞)로 옮기고 PROXY protocol로
-  네트워크 축 좌표를 공급해 신호 자체를 클라이언트 단위로 만드는 것)은 수신 측 구현까지
-  마쳤다 — [§4.1](#41-설명-가능한-동적-위험점수-pip)의 에지 관측 배치. LB 토폴로지
-  라이브 검증(플러드 클라이언트만 드랍·경유 정상 사용자 통과)이 남아 있다.
+  LB IP 드랍을 막는다. 근본 해법(관측을 진짜 에지(LB 앞)로 옮겨 신호를 클라이언트 단위로
+  만드는 것)은 **드랍 축까지 LB 토폴로지에서 라이브 검증**했다 — XDP를 LB 앞 veth에 붙여 커널이
+  클라이언트 IP 단위로 관측하고, 플러드 클라이언트만 커널 드랍·같은 LB 경유 정상 사용자는 통과함을
+  확인했다([§5.3](#53-커널-레벨-트래픽-제어--위험-판단을-xdp-드랍으로-ebpfxdp)의 에이전트가 에지에서
+  클라이언트 IP를 직접 읽으므로 게이트웨이와 무관하게 성립). 다만 PROXY protocol로 **게이트웨이
+  네트워크 축**에 원 클라이언트 좌표를 공급하는 경로([§4.1](#41-설명-가능한-동적-위험점수-pip)의
+  에지 관측 배치)는 단위 테스트까지만 검증됐고 LB 라이브에선 아직 작동을 확인하지 못했다(수신 측
+  reactor-netty 해석 규명이 남은 과제) — 세션 축 재평가를 PP 좌표로 잇는 부분은 미완이다.
 - **PIP 저장소가 in-memory** — 재기동 시 속성·위험 신호가 소실되고 PIP 자체의 다중화가 없다.
   속성·epoch를 외부 저장소로 빼고 PIP를 수평 확장하는 것이 다음 단계다. (재기동으로 epoch가
   후퇴하는 부작용 자체는 게이트웨이 학습값 망각으로 자기치유된다 —
