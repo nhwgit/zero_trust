@@ -1,15 +1,21 @@
 package com.ztg.gateway.risk;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.net.InetSocketAddress;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.http.server.reactive.AbstractServerHttpRequest;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpRequestDecorator;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 
 import com.ztg.gateway.config.ProxyProtocolProperties;
+
+import reactor.netty.http.server.HttpServerRequest;
 
 /**
  * 에지 피어 산출 규칙 검증 — PP 게이트 off/on × 발신 신뢰/비신뢰 × 소켓 피어 미상.
@@ -57,6 +63,22 @@ class EdgePeerResolverTest {
 
         assertThat(resolver.resolve(requestWithRemote("10.1.2.3")).getHostAddress())
                 .isEqualTo("198.51.100.9");
+    }
+
+    @Test
+    void decorator_wrapped_request_still_reaches_native_socket_peer() {
+        // 실제 필터 체인에선 Spring Security 방화벽이 요청을 데코레이터로 감싼 채 전달한다 —
+        // 위임 체인을 벗기지 못하면 소켓 피어 미상(fail-safe null)으로 오판해 네트워크 축이 사라진다.
+        EdgePeerResolver resolver = new EdgePeerResolver(new ProxyProtocolProperties(true, LB_RANGE));
+        HttpServerRequest reactorRequest = mock(HttpServerRequest.class);
+        when(reactorRequest.connectionRemoteAddress()).thenReturn(new InetSocketAddress("172.28.0.2", 55555));
+        AbstractServerHttpRequest nativeHolder = mock(AbstractServerHttpRequest.class);
+        when(nativeHolder.getNativeRequest()).thenReturn(reactorRequest);
+        when(nativeHolder.getRemoteAddress()).thenReturn(new InetSocketAddress("203.0.113.7", 40000));
+
+        ServerHttpRequest decorated = new ServerHttpRequestDecorator(new ServerHttpRequestDecorator(nativeHolder));
+
+        assertThat(resolver.resolve(decorated).getHostAddress()).isEqualTo("203.0.113.7");
     }
 
     @Test

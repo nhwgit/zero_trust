@@ -2,9 +2,13 @@ package com.ztg.gateway.risk;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.server.reactive.AbstractServerHttpRequest;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpRequestDecorator;
 import org.springframework.stereotype.Component;
 
 import com.ztg.common.net.CidrRanges;
@@ -20,6 +24,8 @@ import reactor.netty.http.server.HttpServerRequest;
  */
 @Component
 public class EdgePeerResolver {
+
+    private static final Logger log = LoggerFactory.getLogger(EdgePeerResolver.class);
 
     private final boolean proxyProtocolEnabled;
     private final CidrRanges trustedSenders;
@@ -42,21 +48,38 @@ public class EdgePeerResolver {
         }
         InetSocketAddress socket = connectionPeer(request);
         if (socket == null) {
+            log.debug("edge-peer: socket peer unknown -> null (advertised={})", advertised);
             return null;
         }
-        if (advertised != null && trustedSenders.contains(socket.getAddress())) {
-            return advertised.getAddress();
-        }
-        return socket.getAddress();
+        InetAddress edgePeer = advertised != null && trustedSenders.contains(socket.getAddress())
+                ? advertised.getAddress()
+                : socket.getAddress();
+        log.debug("edge-peer: advertised={} socket={} -> {}", advertised, socket, edgePeer);
+        return edgePeer;
     }
 
-    /** 실제 TCP 소켓 피어. PP가 켜지면 remoteAddress는 광고 값으로 바뀌므로 네이티브 연결 정보에서 얻는다. */
+    /**
+     * 실제 TCP 소켓 피어. PP가 켜지면 remoteAddress는 광고 값으로 바뀌므로 네이티브 연결 정보에서 얻는다.
+     * 필터에 도달하는 요청은 데코레이터로 감싸여 올 수 있어(예: Spring Security 방화벽) 위임 체인을 벗긴다.
+     */
     protected InetSocketAddress connectionPeer(ServerHttpRequest request) {
-        if (request instanceof AbstractServerHttpRequest nativeAccessor
-                && nativeAccessor.getNativeRequest() instanceof HttpServerRequest reactorRequest
-                && reactorRequest.connectionRemoteAddress() instanceof InetSocketAddress socket) {
-            return socket;
+        while (request instanceof ServerHttpRequestDecorator decorator) {
+            request = decorator.getDelegate();
         }
-        return null;
+        if (!(request instanceof AbstractServerHttpRequest nativeAccessor)) {
+            log.debug("edge-peer: request has no native accessor ({})", request.getClass().getName());
+            return null;
+        }
+        Object nativeRequest = nativeAccessor.getNativeRequest();
+        if (!(nativeRequest instanceof HttpServerRequest reactorRequest)) {
+            log.debug("edge-peer: unexpected native request ({})", nativeRequest.getClass().getName());
+            return null;
+        }
+        SocketAddress socket = reactorRequest.connectionRemoteAddress();
+        if (!(socket instanceof InetSocketAddress inet)) {
+            log.debug("edge-peer: non-inet connection peer ({})", socket);
+            return null;
+        }
+        return inet;
     }
 }
