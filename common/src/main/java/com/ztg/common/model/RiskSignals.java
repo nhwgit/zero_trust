@@ -6,11 +6,12 @@ import java.util.Map;
  * 게이트웨이(PEP)가 관측해 요청마다 전달하는 휘발성 위험 신호.
  *
  * <p>IP는 두 좌표계로 나뉜다: {@code sourceIp}(논리 축, 신뢰 프록시 XFF 반영 — ip-change 판정·캐시 키)와
- * {@code networkIp}(네트워크 축, 소켓 피어 = 커널(XDP)이 패킷에서 보는 좌표 — L4 신호↔주체 번역).
- * LB/프록시 뒤에선 두 축이 다르다. 폴백 규칙은 {@link #effectiveNetworkIp()} 한 곳에 둔다.
+ * {@code networkIp}(네트워크 축, 에지 피어 = 커널(XDP)이 에지에서 패킷 소스로 보는 좌표 — L4 신호↔주체
+ * 번역). 직결에선 에지 피어가 곧 소켓 피어이고, LB 에지 배치에선 LB가 PROXY protocol로 광고한 원
+ * 클라이언트다. LB/프록시 뒤에선 두 축이 다르다. 폴백 규칙은 {@link #effectiveNetworkIp()} 한 곳에 둔다.
  *
  * @param sourceIp         출발지 IP(논리 축), {@code null}=미상
- * @param networkIp        소켓 피어 IP(네트워크 축), {@code null}=미상
+ * @param networkIp        에지 피어 IP(네트워크 축), {@code null}=미상
  * @param requestsInWindow 슬라이딩 윈도우 내 이 주체의 요청 수
  * @param hourOfDay        요청 시각의 시(0~23)
  */

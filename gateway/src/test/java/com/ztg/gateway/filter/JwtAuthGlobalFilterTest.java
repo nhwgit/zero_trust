@@ -29,8 +29,12 @@ import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.web.server.ServerWebExchange;
 
+import org.springframework.http.server.reactive.ServerHttpRequest;
+
+import com.ztg.gateway.config.ProxyProtocolProperties;
 import com.ztg.gateway.config.RateProperties;
 import com.ztg.gateway.config.TrustedProxiesProperties;
+import com.ztg.gateway.risk.EdgePeerResolver;
 
 import com.ztg.common.model.DecisionRequest;
 import com.ztg.common.model.DecisionResponse;
@@ -53,8 +57,10 @@ import reactor.test.StepVerifier;
  *   <li>토큰 유효 + PDP 호출 실패 → 403 (fail-close), 백엔드 미호출.</li>
  *   <li>인가 결정이 ztg.authz.decisions 카운터에 decision/cause 태그로 집계됨(관측).</li>
  *   <li>XFF 신뢰 경계: 신뢰 발신(loopback)의 XFF만 채택, 비신뢰/미상 발신의 XFF는 무시.</li>
- *   <li>IP 두 축 분리: source-ip(논리, XFF 반영)와 별개로 network-ip(소켓 피어)를 항상 전달 —
+ *   <li>IP 두 축 분리: source-ip(논리, XFF 반영)와 별개로 network-ip(에지 피어)를 항상 전달 —
  *       커널(XDP) L4 신호와 같은 좌표계를 PIP에 공급한다.</li>
+ *   <li>PROXY protocol 합성: 신뢰 LB의 PP 광고 주소가 두 축의 기준(에지 피어)이 되고,
+ *       XFF 신뢰 판정도 에지 피어 기준이라 LB 뒤 클라이언트의 위조 XFF는 무시된다.</li>
  * </ul>
  */
 class JwtAuthGlobalFilterTest {
@@ -71,8 +77,11 @@ class JwtAuthGlobalFilterTest {
     // 운영 기본값과 같은 loopback 신뢰 — XFF 채택은 발신 원격주소가 이 목록에 들 때만 일어난다.
     private final TrustedProxiesProperties trustedProxies =
             new TrustedProxiesProperties(List.of("127.0.0.0/8", "::1/128"));
+    // 기본(직결) 배치: PP 게이트 off — 에지 피어 = 소켓 피어.
+    private final EdgePeerResolver directResolver =
+            new EdgePeerResolver(new ProxyProtocolProperties(false, List.of()));
     private final JwtAuthGlobalFilter filter = new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, registry,
-            new RiskContextObserver(rateObserver, trustedProxies, clock));
+            new RiskContextObserver(rateObserver, trustedProxies, directResolver, clock));
 
     @Test
     void missing_token_is_401_and_does_not_forward() {
@@ -337,6 +346,63 @@ class JwtAuthGlobalFilterTest {
         assertThat(sent.getValue().context().get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP)).isNull();
         // 피어를 모르면 네트워크 축도 부재(키 자체를 싣지 않음 — 신호 부재는 무가중).
         assertThat(sent.getValue().context().get(com.ztg.common.model.RiskSignals.CTX_NETWORK_IP)).isNull();
+    }
+
+    @Test
+    void pp_advertised_client_is_network_axis_and_its_forged_xff_is_ignored() {
+        // LB 에지 배치: 소켓 피어=신뢰 LB, PP 광고=원 클라이언트(Netty 해석 후 remoteAddress로 나타남).
+        // XFF 신뢰 판정 기준이 에지 피어(=광고된 클라이언트)라, LB 뒤 클라이언트가 위조한 XFF는 무시된다.
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        ArgumentCaptor<DecisionRequest> sent = ArgumentCaptor.forClass(DecisionRequest.class);
+        when(pdpClient.decide(sent.capture(), anyString()))
+                .thenReturn(Mono.just(DecisionResponse.allow("ok")));
+        JwtAuthGlobalFilter ppFilter = new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, registry,
+                new RiskContextObserver(rateObserver, trustedProxies, lbResolver("172.28.0.2"), clock));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/hello")
+                        .remoteAddress(new InetSocketAddress("203.0.113.7", 40000))  // PP 광고 주소
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
+                        .header(RiskContextObserver.FORWARDED_FOR_HEADER, "10.9.9.9"));  // 클라이언트 위조 XFF
+
+        StepVerifier.create(ppFilter.filter(exchange, e -> Mono.empty())).verifyComplete();
+
+        java.util.Map<String, String> ctx = sent.getValue().context();
+        assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_NETWORK_IP)).isEqualTo("203.0.113.7");
+        assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP)).isEqualTo("203.0.113.7");
+    }
+
+    @Test
+    void pp_with_trusted_l7_proxy_behind_lb_composes_xff_on_logical_axis() {
+        // 클라이언트 → L7 프록시(XFF 기록, 신뢰 프록시 대역) → L4 LB(PP) → GW.
+        // 논리 축은 XFF 첫 홉(원 클라이언트), 네트워크 축은 에지가 패킷 소스로 보는 프록시 IP — 두 축이 갈린다.
+        when(decoder.decode("good-token")).thenReturn(Mono.just(sampleJwt()));
+        ArgumentCaptor<DecisionRequest> sent = ArgumentCaptor.forClass(DecisionRequest.class);
+        when(pdpClient.decide(sent.capture(), anyString()))
+                .thenReturn(Mono.just(DecisionResponse.allow("ok")));
+        TrustedProxiesProperties proxyRange = new TrustedProxiesProperties(List.of("198.51.100.0/24"));
+        JwtAuthGlobalFilter ppFilter = new JwtAuthGlobalFilter(decoder, pdpClient, SECRET, registry,
+                new RiskContextObserver(rateObserver, proxyRange, lbResolver("172.28.0.2"), clock));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/hello")
+                        .remoteAddress(new InetSocketAddress("198.51.100.5", 40000))  // PP 광고 = L7 프록시
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer good-token")
+                        .header(RiskContextObserver.FORWARDED_FOR_HEADER, "203.0.113.7"));
+
+        StepVerifier.create(ppFilter.filter(exchange, e -> Mono.empty())).verifyComplete();
+
+        java.util.Map<String, String> ctx = sent.getValue().context();
+        assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_SOURCE_IP)).isEqualTo("203.0.113.7");
+        assertThat(ctx.get(com.ztg.common.model.RiskSignals.CTX_NETWORK_IP)).isEqualTo("198.51.100.5");
+    }
+
+    /** PP 게이트 on + 소켓 피어를 LB로 스텁한 resolver — mock 요청으론 광고/소켓 두 주소를 분리 공급할 수 없어서다. */
+    private static EdgePeerResolver lbResolver(String lbIp) {
+        return new EdgePeerResolver(new ProxyProtocolProperties(true, List.of("172.28.0.0/16"))) {
+            @Override
+            protected InetSocketAddress connectionPeer(ServerHttpRequest request) {
+                return new InetSocketAddress(lbIp, 55555);
+            }
+        };
     }
 
     @Test

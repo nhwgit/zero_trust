@@ -36,6 +36,14 @@ ztg:
     # 기본은 loopback 신뢰(데모/스모크가 localhost 경유 XFF 주입) — 운영이라면 빈 값에서 시작해
     # 실제 LB/프록시 대역만 명시한다. 컨테이너 경로는 도커 브리지 대역을 env로 추가.
     trusted-proxies: ${GATEWAY_TRUSTED_PROXIES:127.0.0.0/8,::1/128}
+    # PROXY protocol 수신(LB 에지 관측 배치): L4 LB가 PP 헤더로 넘긴 원 클라이언트 좌표를 네트워크 축으로
+    # 쓴다 — 에지(LB 앞)에 붙은 XDP가 보는 좌표와 재일치시켜 LB 뒤에서도 신호→주체 번역이 클라이언트
+    # 단위로 동작한다. 기본 off — 끄면 기존 직결 경로가 무수정 그대로다.
+    # PP 헤더도 자기 신고 값: 소켓 피어가 trusted-senders(LB 대역, IP/CIDR)에 들 때만 인정한다(XFF 신뢰
+    # 경계와 같은 원칙, 소비 축이 달라 목록은 별도 — trusted-proxies는 논리 축(XFF), 이건 네트워크 축(PP)).
+    proxy-protocol:
+      enabled: ${GATEWAY_PROXY_PROTOCOL_ENABLED:false}
+      trusted-senders: ${GATEWAY_PROXY_PROTOCOL_TRUSTED_SENDERS:}
     # hour-of-day 관측 시계의 존. 호스트 TZ 대신 설정으로 고정 — 전 서비스(PIP zone 포함)와 같은 값이어야
     # off-hours 판정·캐시 키가 노드 간 일치한다(임계 정합과 같은 배포 설정 결합).
     zone: ${GATEWAY_ZONE:Asia/Seoul}

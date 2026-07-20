@@ -25,6 +25,9 @@ dependencies {
     // 다중 GW 능동 무효화 fan-out 구독(Redis pub/sub). ztg.fanout.enabled=true일 때만 구독 컨테이너 기동 —
     // 끄면(기본) Redis에 연결하지 않으므로 단일 GW/단위테스트는 Redis 없이 그대로 green.
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    // PROXY protocol(v1/v2) 헤더 해석 — reactor-netty의 proxyProtocol 지원이 요구하는 선택 의존성.
+    // ztg.gateway.proxy-protocol.enabled=true(LB 에지 관측 배치)일 때만 파이프라인에 붙는다.
+    implementation 'io.netty:netty-codec-haproxy'
     // 관측: actuator로 /actuator/prometheus 노출, micrometer로 RED 지표(요청수/allow·deny/지연) 수집
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'

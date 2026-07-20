@@ -1,0 +1,32 @@
+# LB 에지 관측 토폴로지 오버레이 — compose-apps의 gateway 앞에 L4 LB(nginx stream, PROXY protocol 송신)를 세운다.
+#
+# 목적: XDP 관측을 진짜 에지(LB 컨테이너 veth)로 옮기면 커널이 클라이언트 IP 단위로 SYN을 보고,
+# GW는 PP로 공급받은 원 클라이언트 좌표를 네트워크 축으로 써서 신호→주체 번역이 LB 뒤에서도 성립한다.
+# 결과: 플러드 클라이언트만 에지에서 드랍되고 같은 LB 경유 정상 클라이언트는 통과한다.
+#
+# 기동:  docker compose -f docker/docker-compose.yml -f docker/compose-apps.yml -f docker/compose-lb.yml \
+#          up -d --build keycloak gateway pdp pip resource-api lb
+# 검증(라이브, ⚠️ 이 파일은 아직 미검증 초안):
+#   · XDP는 ztg-lb 컨테이너 veth에 attach(컨테이너명→veth 해석은 D3 attach 스크립트 재사용).
+#   · 서로 다른 소스 IP가 필요하므로 클라이언트는 같은 도커 네트워크의 별도 컨테이너(curl)로 띄운다 —
+#     호스트에서 직접 접속하면 전 클라이언트가 브리지 게이트웨이 IP 하나로 보인다.
+#   · 직결 무회귀 대조: 호스트→localhost:8080(LB 미경유)은 PP 없이 종전대로 동작해야 한다(AUTO 모드).
+
+services:
+  lb:
+    image: nginx:alpine
+    container_name: ztg-lb
+    restart: unless-stopped
+    volumes:
+      - ./lb/nginx-lb.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "18080:18080"   # LB 경유 진입점. 직결 8080은 그대로 열려 있어 PP off 경로 회귀 확인용.
+    depends_on:
+      - gateway
+
+  gateway:
+    environment:
+      GATEWAY_PROXY_PROTOCOL_ENABLED: "true"
+      # PP 발신 신뢰 대역 = 도커 브리지 사설 대역(LB 컨테이너 IP 포함). compose가 만드는 서브넷이
+      # 배포마다 달라 우선 넓게 준다 — 라이브 검증 시 실제 서브넷을 확인해 좁힐 것.
+      GATEWAY_PROXY_PROTOCOL_TRUSTED_SENDERS: 172.16.0.0/12
