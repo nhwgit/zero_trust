@@ -38,6 +38,9 @@ public class DecisionCache {
     /** fan-out epoch 수신 클램프 — 학습값 대비 이 초과 점프는 위조/오염으로 보고 무시한다. */
     private static final long MAX_REMOTE_EPOCH_JUMP = 1000;
 
+    private static final String METRIC = "ztg.pdp.cache";
+    private static final String TAG_RESULT = "result";
+
     private record Key(DecisionRequest request, long epoch) {}
 
     private record Entry(DecisionResponse response, long expiresAtNanos) {}
@@ -90,12 +93,16 @@ public class DecisionCache {
         this.epochForgetNanos = props.epochForgetAfter().toNanos();
         this.nanoClock = nanoClock;
         this.nextSweepAtNanos = new AtomicLong(nanoClock.getAsLong());
-        this.hits = meterRegistry.counter("ztg.pdp.cache", "result", "hit");
-        this.misses = meterRegistry.counter("ztg.pdp.cache", "result", "miss");
-        this.bypasses = meterRegistry.counter("ztg.pdp.cache", "result", "bypass");
-        this.fanoutApplied = meterRegistry.counter("ztg.pdp.cache", "result", "fanout");
-        this.sweepReclaimed = meterRegistry.counter("ztg.pdp.cache.sweep.reclaimed");
-        meterRegistry.gauge("ztg.pdp.cache.size", store, Map::size);
+        this.hits = resultCounter(meterRegistry, "hit");
+        this.misses = resultCounter(meterRegistry, "miss");
+        this.bypasses = resultCounter(meterRegistry, "bypass");
+        this.fanoutApplied = resultCounter(meterRegistry, "fanout");
+        this.sweepReclaimed = meterRegistry.counter(METRIC + ".sweep.reclaimed");
+        meterRegistry.gauge(METRIC + ".size", store, Map::size);
+    }
+
+    private static Counter resultCounter(MeterRegistry meterRegistry, String result) {
+        return meterRegistry.counter(METRIC, TAG_RESULT, result);
     }
 
     /** 살아 있는 결정이 있으면 반환, 없으면 {@code null}. 캐시 off면 항상 {@code null}(지표 미집계). */
