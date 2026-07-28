@@ -100,8 +100,9 @@ public class RiskEngine {
             score += rateL4Weight;
         }
 
-        int hour = sig.hourOfDay();
-        if (!businessHours.contains(hour)) {
+        // hour 미상(null)은 판정 불성립 = 무가중 — 특정 시를 중립값으로 쓰면 업무시간 설정에 따라 깨진다.
+        Integer hour = sig.hourOfDay();
+        if (hour != null && !businessHours.contains(hour)) {
             factors.add(new RiskFactor("off-hours", offHoursWeight,
                     "access at hour %02d outside business hours %02d-%02d"
                             .formatted(hour, businessHours.startHour(), businessHours.endHour())));

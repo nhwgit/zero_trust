@@ -13,9 +13,9 @@ import java.util.Map;
  * @param sourceIp         출발지 IP(논리 축), {@code null}=미상
  * @param networkIp        에지 피어 IP(네트워크 축), {@code null}=미상
  * @param requestsInWindow 슬라이딩 윈도우 내 이 주체의 요청 수
- * @param hourOfDay        요청 시각의 시(0~23)
+ * @param hourOfDay        요청 시각의 시(0~23), {@code null}=미상
  */
-public record RiskSignals(String sourceIp, String networkIp, int requestsInWindow, int hourOfDay) {
+public record RiskSignals(String sourceIp, String networkIp, int requestsInWindow, Integer hourOfDay) {
 
     public static final String CTX_SOURCE_IP = "source-ip";
     public static final String CTX_NETWORK_IP = "network-ip";
@@ -27,9 +27,12 @@ public record RiskSignals(String sourceIp, String networkIp, int requestsInWindo
         return new RiskSignals(sourceIp, null, requestsInWindow, hourOfDay);
     }
 
-    /** 신호가 없을 때의 중립값(IP 미상·레이트 0·시각 정오). 부재는 위험 가중이 아니다. */
+    /**
+     * 신호가 없을 때의 중립값(IP·시각 미상, 레이트 0). 부재는 위험 가중이 아니다.
+     * 시각은 특정 시가 아니라 미상(null) — 어떤 시를 골라도 업무시간 설정에 따라 중립이 아닐 수 있다.
+     */
     public static RiskSignals none() {
-        return new RiskSignals(null, null, 0, 12);
+        return new RiskSignals(null, null, 0, null);
     }
 
     /**
@@ -48,18 +51,23 @@ public record RiskSignals(String sourceIp, String networkIp, int requestsInWindo
         String ip = context.get(CTX_SOURCE_IP);
         String networkIp = context.get(CTX_NETWORK_IP);
         int requests = parseOr(context.get(CTX_REQUESTS_IN_WINDOW), 0);
-        int hour = parseOr(context.get(CTX_HOUR_OF_DAY), 12);
+        Integer hour = parseOrNull(context.get(CTX_HOUR_OF_DAY));
         return new RiskSignals(ip, networkIp, requests, hour);
     }
 
     private static int parseOr(String value, int fallback) {
+        Integer parsed = parseOrNull(value);
+        return parsed != null ? parsed : fallback;
+    }
+
+    private static Integer parseOrNull(String value) {
         if (value == null || value.isBlank()) {
-            return fallback;
+            return null;
         }
         try {
             return Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            return null;
         }
     }
 }

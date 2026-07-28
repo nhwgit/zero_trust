@@ -154,6 +154,17 @@ class PolicyEngineTest {
     }
 
     @Test
+    void payroll_denied_when_hour_unobserved() {
+        // 시간 조건은 경성 조건이라 중립이 없다 — hour 미관측(null) = 검증 불가 = 불만족(fail-close).
+        DecisionResponse res = engine.evaluate(
+                payrollRequest(),
+                new SubjectAttributes("alice", "finance", true, 10), lowRisk(), EPOCH, null);
+
+        assertThat(res.decision()).isEqualTo(Decision.DENY);
+        assertThat(res.reason()).contains("hour unobserved");
+    }
+
+    @Test
     void non_payroll_resource_allowed_by_default() {
         DecisionResponse res = engine.evaluate(  // 업무시간 밖이어도 payroll 정책과 무관
                 new DecisionRequest("alice", "GET", "/api/hello", Map.of()),

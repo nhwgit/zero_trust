@@ -39,10 +39,11 @@ public class PolicyEngine {
 
     /**
      * @param epoch     주체의 현재 위험 epoch — 결정에 실어 게이트웨이로 역전파
-     * @param hourOfDay 게이트웨이가 관측한 요청 시각(0~23) — PIP off-hours 가중과 같은 값
+     * @param hourOfDay 게이트웨이가 관측한 요청 시각(0~23) — PIP off-hours 가중과 같은 값.
+     *                  {@code null}=미관측 — 시간 조건은 경성 조건이라 검증 불가 = 불만족(fail-close)
      */
     public DecisionResponse evaluate(DecisionRequest request, SubjectAttributes attrs,
-                                     RiskAssessment risk, long epoch, int hourOfDay) {
+                                     RiskAssessment risk, long epoch, Integer hourOfDay) {
         if (risk.score() >= riskThreshold) {
             return DecisionResponse.deny(
                     "risk score %d >= threshold %d [%s]".formatted(risk.score(), riskThreshold, risk.explain()),
@@ -58,13 +59,16 @@ public class PolicyEngine {
     }
 
     private DecisionResponse evaluatePayroll(SubjectAttributes attrs, RiskAssessment risk,
-                                             long epoch, int hourOfDay) {
+                                             long epoch, Integer hourOfDay) {
         List<String> failures = new ArrayList<>();
 
         if (!FINANCE.equalsIgnoreCase(attrs.department())) {
             failures.add("department must be finance (was %s)".formatted(attrs.department()));
         }
-        if (!businessHours.contains(hourOfDay)) {
+        if (hourOfDay == null) {
+            failures.add("must be within business hours %02d-%02d (hour unobserved)"
+                    .formatted(businessHours.startHour(), businessHours.endHour()));
+        } else if (!businessHours.contains(hourOfDay)) {
             failures.add("must be within business hours %02d-%02d (was hour %02d)"
                     .formatted(businessHours.startHour(), businessHours.endHour(), hourOfDay));
         }

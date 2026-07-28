@@ -51,8 +51,8 @@ class PolicyDecisionServiceTest {
                         new SubjectAttributes("alice", "finance", true, 10),
                         new RiskAssessment(10, List.of()), 3L));
 
-        // context 없음 → hour는 중립값(정오)으로 폴백 = 업무시간 내.
-        DecisionResponse res = service.decide(new DecisionRequest("alice", "GET", "/api/payroll", Map.of()));
+        // context 없는 일반 리소스 = 기본 허용 경로. payroll이면 hour 미관측이 fail-close라 DENY가 된다(엔진 테스트).
+        DecisionResponse res = service.decide(new DecisionRequest("alice", "GET", "/api/hello", Map.of()));
 
         assertThat(res.decision()).isEqualTo(Decision.ALLOW);
         assertThat(res.epoch()).isEqualTo(3L);   // PIP epoch가 결정에 실려 게이트웨이로 역전파된다

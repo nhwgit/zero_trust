@@ -218,4 +218,16 @@ class RiskEngineTest {
         assertThat(a.score()).isEqualTo(10);
         assertThat(a.factors()).extracting(RiskFactor::signal).containsExactly("baseline");
     }
+
+    @Test
+    void absent_hour_stays_neutral_under_any_business_hours_config() {
+        // 회귀 방지: hour 미상은 업무시간 설정과 무관하게 무가중이어야 한다. 오후 근무(13-18) 설정에서
+        // "정오" 같은 특정 시를 중립값으로 쓰면 부재가 off-hours 벌점이 된다 — null만이 설정 무관 중립.
+        RiskEngine afternoon = new RiskEngine(new RiskProperties(40, 30, 40, 40, 15, 60, 40, 13, 18));
+        RiskAssessment a = afternoon.assess(
+                alice(10), new RiskSignals("1.2.3.4", null, 5, null), "1.2.3.4", false, null, null);
+
+        assertThat(a.factors()).extracting(RiskFactor::signal).doesNotContain("off-hours");
+        assertThat(a.score()).isEqualTo(10);
+    }
 }
