@@ -255,6 +255,7 @@ X-Denied-Reason: risk score 80 >= threshold 80 [baseline(+10): stored baseline r
 | at-most-once 전파가 순간 신호를 놓치면 영영 미반영 | 신호 수명 연장(hold 창) — 전파 시맨틱과 신호 수명은 한 쌍 ([§4.1](#41-설명-가능한-동적-위험점수-pip)) | [`SubjectRiskState`](pip/src/main/java/com/ztg/pip/store/SubjectRiskState.java) |
 | 관측 지점(서비스·노드)마다 시계가 달라 판정·캐시 키가 갈림 | hour 관측을 GW로 일원화 + 잔여 시계는 존 설정 고정 ([§4.2](#42-정책-결정-pdp)) | [`RiskContextObserver`](gateway/src/main/java/com/ztg/gateway/risk/RiskContextObserver.java) · [`PolicyEngine`](pdp/src/main/java/com/ztg/pdp/policy/PolicyEngine.java) |
 | 위조 epoch 최댓값 주입·권위자 후퇴(PIP 재기동) | 미신뢰 입구 클램프 + 신뢰 확인 기반 망각(리스 갱신 의미론) ([§4.4](#44-다중-게이트웨이--fan-out과-전역-레이트-집계-redis)) | [`DecisionCache.applyRemoteEpoch`](gateway/src/main/java/com/ztg/gateway/cache/DecisionCache.java) |
+| 일시 장애(PIP 다운)의 fail-close 결정이 캐시에 TTL만큼 굳음 | 판단 불성립을 결정 종류로 분리(`INDETERMINATE`) — 집행은 403, 캐시 적재·epoch 학습은 건너뜀 ([§9](#9-설계-원칙)) | [`PolicyDecisionService`](pdp/src/main/java/com/ztg/pdp/policy/PolicyDecisionService.java) · [`DecisionCache.put`](gateway/src/main/java/com/ztg/gateway/cache/DecisionCache.java) |
 
 ---
 
@@ -416,8 +417,9 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/hello
 - **fail-close 기본값** — 보안 데모이므로 모호하면 차단을 택하고 이유를 기록한다.
 - **결측은 성격별로 다르게** — 관측의 공백(신호 미도착)은 무가중(fail-neutral, 부재는 위험의
   증거가 아니다), 검증 불가한 경성 조건은 불만족(fail-close), 지식의 공백(미등록 주체)은
-  최대 위험(fail-safe). 시각 미상은 특정 시각이 아니라 null로 둔다 — 어떤 폴백 값을 골라도
-  업무시간 설정에 따라 중립이 깨질 수 있다.
+  최대 위험(fail-safe), 맥락 전체의 공백(PIP 장애)은 판단 불성립(`INDETERMINATE` — 차단은
+  하되 캐시에 기억하지 않는다). 시각 미상은 특정 시각이 아니라 null로 둔다 — 어떤 폴백
+  값을 골라도 업무시간 설정에 따라 중립이 깨질 수 있다.
 - **경합은 비용으로 진다** — 틀린 결정(정합 훼손)은 막고, 캐시 미스=재평가로 흡수 가능한
   경합만 허용한다 ([§5](#5-동시성일관성-설계)).
 - **조건의 설정화** — 위험 가중치·임계·업무시간을 전부 외부화해, 코드 수정 없이 결과를 뒤집어 보일 수 있다.
