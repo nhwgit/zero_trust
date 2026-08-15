@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 import com.ztg.gateway.config.DecisionCacheProperties;
 import com.ztg.gateway.config.RateProperties;
 
+import com.ztg.common.model.Decision;
 import com.ztg.common.model.DecisionRequest;
 import com.ztg.common.model.DecisionResponse;
 import com.ztg.common.model.RiskSignals;
@@ -135,9 +136,11 @@ public class DecisionCache {
      *
      * <p>키는 {@code knownEpochs}가 아니라 <b>이 결정의</b> epoch로 만든다 — 위험 전이 순간 동시 평가 경합에서
      * 뒤늦은 옛 epoch의 stale ALLOW가 신선한 DENY를 덮지 않게(옛 결정은 옛 세대 키에 고립된다).
+     *
+     * <p>{@link Decision#INDETERMINATE}는 적재·학습 모두 건너뛴다 — 캐시하면 일시 장애가 TTL만큼 굳는다.
      */
     public void put(DecisionRequest request, DecisionResponse value) {
-        if (!enabled) {
+        if (!enabled || value.decision() == Decision.INDETERMINATE) {
             return;
         }
         learnEpoch(request.subject(), value.epoch());

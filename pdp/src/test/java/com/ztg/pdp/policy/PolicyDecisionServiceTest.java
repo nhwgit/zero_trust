@@ -31,13 +31,15 @@ class PolicyDecisionServiceTest {
     private final PolicyDecisionService service = new PolicyDecisionService(pip, engine, registry);
 
     @Test
-    void pip_failure_fails_closed_to_deny() {
+    void pip_failure_fails_closed_to_indeterminate() {
         when(pip.assess(eq("alice"), any(RiskSignals.class)))
                 .thenThrow(new RuntimeException("connection refused"));
 
         DecisionResponse res = service.decide(new DecisionRequest("alice", "GET", "/api/payroll", Map.of()));
 
-        assertThat(res.decision()).isEqualTo(Decision.DENY);
+        // 정책이 거부한 게 아니라 맥락이 없어 판단 불성립 — 게이트웨이가 이 결정을 캐시하지 않게 하는 근거.
+        assertThat(res.decision()).isEqualTo(Decision.INDETERMINATE);
+        assertThat(res.isAllowed()).isFalse();
         assertThat(res.reason()).contains("context unavailable");
         // PIP 장애로 인한 거부는 정책 거부와 구분해 집계된다.
         assertThat(registry.counter("ztg.pdp.decisions", "decision", "deny", "cause", "pip_error").count())

@@ -15,7 +15,7 @@ import com.ztg.common.model.RiskSignals;
 
 /**
  * 판단 오케스트레이션 — PIP에서 맥락(속성+동적 위험점수+epoch)을 모아 {@link PolicyEngine}으로 평가한다.
- * fail-close: PIP 조회 실패 시 맥락 없이 판단할 수 없으므로 DENY("판단 불가 = 차단").
+ * fail-close: PIP 조회 실패 시 맥락 없이 판단할 수 없으므로 INDETERMINATE("판단 불가 = 차단").
  */
 @Service
 public class PolicyDecisionService {
@@ -40,7 +40,8 @@ public class PolicyDecisionService {
         } catch (RuntimeException e) {
             log.warn("PIP lookup failed for subject={}, failing closed: {}", request.subject(), e.toString());
             recordDecision("deny", "pip_error");
-            return DecisionResponse.deny("context unavailable (PIP error): " + e.getMessage());
+            // DENY가 아닌 INDETERMINATE — 게이트웨이가 이 장애 결정을 캐시에 굳히지 않게.
+            return DecisionResponse.indeterminate("context unavailable (PIP error): " + e.getMessage());
         }
 
         // 시간 정책 입력도 게이트웨이 관측값 — PDP 자체 시계로 판정하면 노드 TZ에 따라 결과가 갈린다.

@@ -119,7 +119,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                 .doOnNext(d -> sample.stop(meterRegistry.timer("ztg.pdp.requests", "outcome", "success")))
                 .onErrorResume(e -> {
                     sample.stop(meterRegistry.timer("ztg.pdp.requests", "outcome", "error"));
-                    return Mono.just(DecisionResponse.deny(PDP_UNAVAILABLE_PREFIX + e.getMessage()));
+                    return Mono.just(DecisionResponse.indeterminate(PDP_UNAVAILABLE_PREFIX + e.getMessage()));
                 });
     }
 

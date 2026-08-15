@@ -23,7 +23,8 @@ import com.ztg.common.model.RiskSignals;
 
 /**
  * {@link DecisionCache} 단위 테스트 — 값 동등성 키, 휘발성 레이트 제외, source-ip 분기, enabled 토글에 더해
- * 능동 무효화(주체 epoch 키), 위험적응 TTL, 가득 참 시 고아 회수(sweep)와 그 스로틀을 검증한다.
+ * 능동 무효화(주체 epoch 키), 위험적응 TTL, 판단 불가(fail-close) 비적재, 가득 참 시 고아 회수(sweep)와
+ * 그 스로틀을 검증한다.
  * 시간 의존 테스트는 단조 시계를 주입해 결정적으로 둔다.
  */
 class DecisionCacheTest {
@@ -372,6 +373,23 @@ class DecisionCacheTest {
         return new DecisionRequest(subject, "GET", path, Map.of(
                 RiskSignals.CTX_SOURCE_IP, ip,
                 RiskSignals.CTX_REQUESTS_IN_WINDOW, rate));
+    }
+
+    @Test
+    void indeterminateFailCloseIsNotCached() {
+        // PIP 장애의 판단 불가는 캐시 대상이 아니다 — 적재하면 장애가 끝나도 차단이 TTL만큼 남는다.
+        DecisionCache cache = cache(true);
+        cache.put(request("alice", "/api/hello"),
+                DecisionResponse.indeterminate("context unavailable (PIP error): connection refused"));
+
+        // 미스 → 다음 요청이 PDP를 다시 부른다. PIP가 복구되면 TTL 대기 없이 정상 결정으로 돌아온다.
+        assertThat(cache.getIfPresent(request("alice", "/api/hello"))).isNull();
+
+        // 반대로 이미 살아 있는 결정은 장애가 밀어내지 못한다 — 장애 중에도 캐시 히트는 계속 동작.
+        cache.put(request("bob", "/api/hello"), decision(Decision.ALLOW, 10, 3));
+        cache.put(request("bob", "/api/hello"),
+                DecisionResponse.indeterminate("context unavailable (PIP error): connection refused"));
+        assertThat(cache.getIfPresent(request("bob", "/api/hello")).isAllowed()).isTrue();
     }
 
     @Test

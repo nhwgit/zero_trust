@@ -25,9 +25,14 @@ public record DecisionResponse(
         return new DecisionResponse(Decision.ALLOW, reason, 0, List.of(), 0L);
     }
 
-    /** 위험 맥락 없는 단순 거부(fail-close·정책 거부용). score=0, epoch=0. */
+    /** 위험 맥락 없는 단순 거부(정책 거부용). score=0, epoch=0. */
     public static DecisionResponse deny(String reason) {
         return new DecisionResponse(Decision.DENY, reason, 0, List.of(), 0L);
+    }
+
+    /** 맥락 부재로 판단 불성립(fail-close). score/epoch의 0은 관측값이 아니라 미상. */
+    public static DecisionResponse indeterminate(String reason) {
+        return new DecisionResponse(Decision.INDETERMINATE, reason, 0, List.of(), 0L);
     }
 
     public static DecisionResponse allow(String reason, RiskAssessment risk, long epoch) {
